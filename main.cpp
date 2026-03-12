@@ -1,5 +1,5 @@
-#pragma comment(lib, "libfaad.lib")
-
+﻿#pragma comment(lib, "libfaad.lib")
+#include <memory>
 #include <iterator>
 #include <vector>
 #include <algorithm>
@@ -7,6 +7,14 @@
 #include <unordered_map>
 #include "neaacdec.h"
 #include "fmod.h"
+
+#pragma warning(push)
+#pragma warning(disable:4018)
+#pragma warning(disable:4101)
+#pragma warning(disable:4267)
+#define MINIMP4_IMPLEMENTATION
+#include "minimp4.h"
+#pragma warning(pop)
 
 typedef unsigned long       DWORD;
 typedef int                 BOOL;
@@ -20,22 +28,62 @@ typedef struct
     std::vector<std::byte> data;
 } MP4HEADER;
 
+// FAAD2とFMODのフォーマット対応情報
+typedef struct
+{
+    FMOD_SOUND_FORMAT  fmodFormat;      // FMODのフォーマット
+    unsigned char      faadFormat;      // FAAD2のフォーマット
+    unsigned int       bytesPerSample;  // 1サンプルあたりのバイト数
+} PCMFormatInfo;
+
 typedef struct 
 {
     std::uint64_t sample_rates;
     std::byte channels;
     NeAACDecHandle aac;
     std::vector<std::byte> buffer;
-    std::uint64_t bufferlen;
+    unsigned long bufferlen;
 
-    std::uint32_t lengthpcm;
+    std::uint64_t lengthpcm;
     std::uint32_t pcmblocks;
-    std::uint64_t position;
+    std::uint32_t position;
+
+    PCMFormatInfo          format;      // フォーマット情報
 
     std::vector<std::byte> title;
     std::vector<std::byte> artist;
     std::vector<std::byte> album;
 } info;
+
+// =========================================================
+// フォーマット解決関数
+// userexinfoからFMODのフォーマットを取得し、
+// 対応するFAAD2フォーマットとバイト数を返す
+// =========================================================
+PCMFormatInfo resolvePCMFormat(const FMOD_CREATESOUNDEXINFO* userexinfo)
+{
+    // userexinfoが無いか、フォーマット未指定の場合はPCM16にフォールバック
+    FMOD_SOUND_FORMAT requestedFormat = FMOD_SOUND_FORMAT_NONE;
+    if (userexinfo)
+        requestedFormat = userexinfo->format;
+
+    switch (requestedFormat)
+    {
+    case FMOD_SOUND_FORMAT_PCMFLOAT:
+        return { FMOD_SOUND_FORMAT_PCMFLOAT, FAAD_FMT_FLOAT, 4 };
+
+    case FMOD_SOUND_FORMAT_PCM32:
+        return { FMOD_SOUND_FORMAT_PCM32, FAAD_FMT_32BIT, 4 };
+
+    case FMOD_SOUND_FORMAT_PCM24:
+        return { FMOD_SOUND_FORMAT_PCM24, FAAD_FMT_24BIT, 3 };
+
+    case FMOD_SOUND_FORMAT_PCM16:
+    default:
+        // 未対応フォーマットはPCM16にフォールバック
+        return { FMOD_SOUND_FORMAT_PCM16, FAAD_FMT_16BIT, 2 };
+    }
+}
 
 std::uint32_t _get_size(const std::byte* size)
 {
@@ -43,7 +91,7 @@ std::uint32_t _get_size(const std::byte* size)
 
     for (size_t i = 0; i < sizeof(std::uint32_t); i++)
     {
-        const std::uint8_t bit_shifts = (sizeof(std::uint32_t) - 1 - i) * 8;
+        const std::uint8_t bit_shifts = static_cast<std::uint8_t>((sizeof(std::uint32_t) - 1 - i) * 8);
         x |= (std::uint32_t)size[i] << bit_shifts;
     }
     return x;
@@ -55,10 +103,20 @@ std::uint64_t _get_size_64(const std::byte* size)
 
     for (size_t i = 0; i < sizeof(std::uint64_t); i++)
     {
-        const std::uint8_t bit_shifts = (sizeof(std::uint64_t) - 1 - i) * 8;
+        const std::uint8_t bit_shifts = static_cast<std::uint8_t>((sizeof(std::uint64_t) - 1 - i) * 8);
         x |= (std::uint64_t)size[i] << bit_shifts;
     }
     return x;
+}
+
+// minimp4がFMODのファイルコールバック経由でデータを読み込むためのブリッジ関数
+static int mp4_read_callback(int64_t offset, void* buffer, size_t size, void* token)
+{
+    FMOD_CODEC_STATE* codec = (FMOD_CODEC_STATE*)token;
+    unsigned int bytesread = 0;
+    codec->functions->seek(codec, (unsigned int)offset, FMOD_CODEC_SEEK_METHOD_SET);
+    codec->functions->read(codec, buffer, (unsigned int)size, &bytesread);
+    return (bytesread != size) ? 1 : 0;
 }
 
 // openコールバック関数は、ファイルからデータを読み込んでデコードするために使用されます。
@@ -80,7 +138,7 @@ FMOD_RESULT F_CALLBACK myCodec_open(FMOD_CODEC_STATE* codec, FMOD_MODE usermode,
     std::uint32_t readBytes = 0;    // リードサイズ
 
     // MP4 HEADER
-    MP4HEADER* chunk = new MP4HEADER;
+    auto chunk = std::make_unique<MP4HEADER>();
 
     FMOD_RESULT r;
     std::uint64_t size = 0;         // データ領域のサイズ
@@ -103,10 +161,10 @@ FMOD_RESULT F_CALLBACK myCodec_open(FMOD_CODEC_STATE* codec, FMOD_MODE usermode,
     // データ領域のサイズ取得
     size = _get_size(chunk->size);
     // データ領域確保(ヘッダブロックの8バイトは減算)
-    chunk->data.resize(size - 8);
+    chunk->data.resize(static_cast<size_t>(size - 8));
 
     // ftype:[M4A]　データ領域からファイルタイプの取得
-    r = codec->functions->read(codec, chunk->data.data(), size - 8, &readBytes);
+    r = codec->functions->read(codec, chunk->data.data(), static_cast<unsigned int>(size - 8), &readBytes);
     if (std::memcmp(chunk->data.data(), "M4A ", 4) != 0
     &&  std::memcmp(chunk->data.data(), "mp42", 4) != 0)
         return FMOD_ERR_FORMAT; // フォーマットエラー
@@ -115,14 +173,10 @@ FMOD_RESULT F_CALLBACK myCodec_open(FMOD_CODEC_STATE* codec, FMOD_MODE usermode,
     bool moov = false;
 
     // API連携データ
-    info* x = new info;
-    if (!x)
-        return FMOD_ERR_INTERNAL;
-
-    memset(x, 0, sizeof(info));
+    auto x = std::make_unique<info>();
 
     // mdatブロックまでループ
-    while (!mdat || !moov)
+    while (!mdat)
     {
         // ヘッダブロック8バイト読み込み
         r = codec->functions->read(codec, chunk->size, 4, &readBytes);
@@ -144,9 +198,9 @@ FMOD_RESULT F_CALLBACK myCodec_open(FMOD_CODEC_STATE* codec, FMOD_MODE usermode,
             size = _get_size(chunk->size) - 8;
         }
         // データ領域確保
-        chunk->data.resize(size);
+        chunk->data.resize(static_cast<size_t>(size));
         // データ部読み込み
-        r = codec->functions->read(codec, chunk->data.data(), size, &readBytes);
+        r = codec->functions->read(codec, chunk->data.data(), static_cast<unsigned int>(size), &readBytes);
         totalRead += readBytes;
 
         // 累計読み込みサイズがファイルサイズ以上の場合はループ脱出
@@ -163,129 +217,53 @@ FMOD_RESULT F_CALLBACK myCodec_open(FMOD_CODEC_STATE* codec, FMOD_MODE usermode,
             std::memcpy(x->buffer.data(), chunk->data.data(), x->bufferlen);
             mdat = true;
         }
-
-        // タグ情報を取得するため/moov/udta/meta/ilst配下の情報を力業で取得している
-        // もっといい方法があるかもしれんが頭回らんので許して
-        // いやほんとこの処理は無いわ
-        if (std::memcmp(chunk->header, "moov", 4) == 0)
-        {
-            MP4HEADER* tmpHead = new MP4HEADER();
-            std::vector <std::byte> tmpdata;
-            std::uint32_t shift = 0;
-
-            std::memcpy(tmpHead->size, chunk->data.data() + shift, 4);
-            shift += 4;
-            std::memcpy(tmpHead->header, chunk->data.data() + shift, 4);
-            shift += 4;
-
-            tmpHead->data.clear();
-            tmpHead->data.resize(_get_size(tmpHead->size) - 8);
-            // moovのデータ領域から次の階層を退避
-            std::memcpy(tmpHead->data.data(), chunk->data.data() + shift, _get_size(tmpHead->size) - 8);
-            shift += (_get_size(tmpHead->size) - 8);
-
-            // udtaまでスキップ
-            while (std::memcmp(tmpHead->header, "udta", 4) != 0)
-            {
-                std::memcpy(tmpHead->size, chunk->data.data() + shift, 4);
-                shift += 4;
-                std::memcpy(tmpHead->header, chunk->data.data() + shift, 4);
-                shift += 4;
-                if (_get_size(tmpHead->size) > 0)
-                {
-                    tmpdata.clear();
-                    tmpdata.resize(_get_size(tmpHead->size) - 8);
-                    std::memcpy(tmpdata.data(), chunk->data.data() + shift, _get_size(tmpHead->size) - 8);
-                    shift += (_get_size(tmpHead->size) - 8);
-                }
-            }
-
-            // udta取得できたなら
-            if (std::memcmp(tmpHead->header, "udta", 4) == 0)
-            {
-                std::memcpy(tmpHead->size, tmpdata.data(), 4);
-                std::memcpy(tmpHead->header, tmpdata.data() + 4, 4);
-                tmpHead->data.resize(_get_size(tmpHead->size) - 8);
-                std::memcpy(tmpHead->data.data(), tmpdata.data() + 8, _get_size(tmpHead->size) - 8);
-
-                // metaあるよね
-                if (std::memcmp(tmpHead->header, "meta", 4) == 0)
-                {
-                    shift = 4;
-                    std::memcpy(tmpHead->size, tmpHead->data.data() + shift, 4);
-                    shift += 4;
-                    std::memcpy(tmpHead->header, tmpHead->data.data() + shift, 4);
-                    // 謎の4バイトがある
-                    shift += 4;
-                    shift += (_get_size(tmpHead->size) - 8);
-
-                    // ilstタグまでスキップ
-                    while (std::memcmp(tmpHead->header, "ilst", 4) != 0)
-                    {
-                        std::memcpy(tmpHead->size, tmpHead->data.data() + shift, 4);
-                        shift += 4;
-                        std::memcpy(tmpHead->header, tmpHead->data.data() + shift, 4);
-                        shift += 4;
-
-                        // ilstデータ部がメタデータになるのでここでブレイク
-                        if (std::memcmp(tmpHead->header, "ilst", 4) == 0)
-                            break;
-                        shift += (_get_size(tmpHead->size) - 8);
-                    }
-
-                    // ilstあるはず
-                    if (std::memcmp(tmpHead->header, "ilst", 4) == 0)
-                    {
-                        // 必要なタグ情報取得し終わるまで
-                        while (shift < tmpHead->data.size())
-                        {
-                            std::memcpy(tmpHead->size, tmpHead->data.data() + shift, 4);
-                            shift += 4;
-                            std::memcpy(tmpHead->header, tmpHead->data.data() + shift, 4);
-                            shift += 4;
-                            tmpdata.clear();
-                            tmpdata.resize(_get_size(tmpHead->size) - 8);
-                            std::memcpy(tmpdata.data(), tmpHead->data.data() + shift, _get_size(tmpHead->size) - 8);
-
-                            // 🄫ARTタグ
-                            if (tmpHead->header[0] == std::byte(0xA9) && tmpHead->header[1] == std::byte(0x41) && tmpHead->header[2] == std::byte(0x52) && tmpHead->header[3] == std::byte(0x54))
-                            {
-                                std::string name = "ARTIST";
-                                // データ部に謎の16バイトがある為先頭からスキップし、スキップ分の領域は減らす
-                                x->artist.resize(_get_size(tmpHead->size) - 24);
-                                std::memcpy(x->artist.data(), tmpdata.data() + 16, _get_size(tmpHead->size) - 24);
-                                codec->functions->metadata(codec, FMOD_TAGTYPE_ID3V2, name.data(), x->artist.data(), x->artist.size(), FMOD_TAGDATATYPE_STRING_UTF8, 1);
-                            }
-                            // 🄫albタグ
-                            if (tmpHead->header[0] == std::byte(0xA9) && tmpHead->header[1] == std::byte(0x61) && tmpHead->header[2] == std::byte(0x6C) && tmpHead->header[3] == std::byte(0x62))
-                            {
-                                std::string name = "ALBUM";
-                                // データ部に謎の16バイトがある為先頭からスキップ、スキップ分の領域は減らす
-                                x->album.resize(_get_size(tmpHead->size) - 24);
-                                std::memcpy(x->album.data(), tmpdata.data() + 16, _get_size(tmpHead->size) - 24);
-                                codec->functions->metadata(codec, FMOD_TAGTYPE_ID3V2, name.data(), x->album.data(), x->album.size(), FMOD_TAGDATATYPE_STRING_UTF8, 1);
-                            }
-                            // 🄫namタグ
-                            if (tmpHead->header[0] == std::byte(0xA9) && tmpHead->header[1] == std::byte(0x6E) && tmpHead->header[2] == std::byte(0x61) && tmpHead->header[3] == std::byte(0x6D))
-                            {
-                                std::string name = "TITLE";
-                                // データ部に謎の16バイトがある為先頭からスキップ、スキップ分の領域は減らす
-                                x->title.resize(_get_size(tmpHead->size) - 24);
-                                std::memcpy(x->title.data(), tmpdata.data() + 16, _get_size(tmpHead->size) - 24);
-                                codec->functions->metadata(codec, FMOD_TAGTYPE_ID3V2, name.data(), x->title.data(), x->title.size(), FMOD_TAGDATATYPE_STRING_UTF8, 1);
-                            }
-                            shift += (_get_size(tmpHead->size) - 8);
-                        }
-                    }
-                }
-            }
-            moov = true;
-        }
     }
 
     // mdat見つからなかった場合はエラー
     if (!mdat)
         return FMOD_ERR_FORMAT; // フォーマットエラー
+
+    // =========================================================
+    // minimp4によるタグ情報取得
+    // =========================================================
+    // ファイル先頭に戻す
+    codec->functions->seek(codec, 0, FMOD_CODEC_SEEK_METHOD_SET);
+
+    MP4D_demux_t mp4 = {};
+    if (MP4D_open(&mp4, mp4_read_callback, codec, totalSize) != 0)
+    {
+        if (mp4.tag.title)
+        {
+            const char* val = (const char*)mp4.tag.title;
+            x->title.assign((std::byte*)val, (std::byte*)val + strlen(val));
+            codec->functions->metadata(codec, FMOD_TAGTYPE_ID3V2, (char*)"TITLE",
+                x->title.data(), static_cast<unsigned int>(x->title.size()), FMOD_TAGDATATYPE_STRING_UTF8, 1);
+        }
+        if (mp4.tag.artist)
+        {
+            const char* val = (const char*)mp4.tag.artist;
+            x->artist.assign((std::byte*)val, (std::byte*)val + strlen(val));
+            codec->functions->metadata(codec, FMOD_TAGTYPE_ID3V2, (char*)"ARTIST",
+                x->artist.data(), static_cast<unsigned int>(x->artist.size()), FMOD_TAGDATATYPE_STRING_UTF8, 1);
+        }
+        if (mp4.tag.album)
+        {
+            const char* val = (const char*)mp4.tag.album;
+            x->album.assign((std::byte*)val, (std::byte*)val + strlen(val));
+            codec->functions->metadata(codec, FMOD_TAGTYPE_ID3V2, (char*)"ALBUM",
+                x->album.data(), static_cast<unsigned int>(x->album.size()), FMOD_TAGDATATYPE_STRING_UTF8, 1);
+        }
+        MP4D_close(&mp4);
+    }    
+    
+    // =========================================================
+    // フォーマット解決
+    // =========================================================
+    x->format = resolvePCMFormat(userexinfo);
+
+    // =========================================================
+    // FAAD2によるAACデコード
+    // =========================================================
 
     // FAAD2デコーダオープン
     if (!(x->aac = NeAACDecOpen()))
@@ -304,67 +282,76 @@ FMOD_RESULT F_CALLBACK myCodec_open(FMOD_CODEC_STATE* codec, FMOD_MODE usermode,
     NeAACDecConfigurationPtr config;
     /* Set configuration */
     config = NeAACDecGetCurrentConfiguration(x->aac);
-    config->outputFormat = FAAD_FMT_16BIT;
-    config->defSampleRate = 44100;
+    config->outputFormat = x->format.faadFormat;
+    // userexinfoにサンプルレートの指定がある場合はそちらを優先
+    if (userexinfo && userexinfo->defaultfrequency > 0)
+        config->defSampleRate = userexinfo->defaultfrequency;
+    else
+        config->defSampleRate = static_cast<unsigned long>(x->sample_rates);
+
     NeAACDecSetConfiguration(x->aac, config);
 
 
     void* buf = NULL;               // デコードデータ
-    std::uint64_t position = 0;     // データ部の現在位置
+    unsigned long position = 0;     // データ部の現在位置
     std::uint64_t read = 0;         // デコード後のデータサイズ
     std::vector<std::byte> decoded; // 全デコードデータ
     decoded.clear();
 
-    NeAACDecFrameInfo info;
+    NeAACDecFrameInfo frameInfo;
 
     // データ部の現在位置がデータサイズ未満の間はループ
     while (position < x->bufferlen)
     {
         // データ部の現在位置からデコード
-        buf = NeAACDecDecode(x->aac, &info, (unsigned char*)&x->buffer[position], x->bufferlen - position);
+        buf = NeAACDecDecode(x->aac, &frameInfo, (unsigned char*)&x->buffer[position], x->bufferlen - position);
 
         // エラーの場合はファイル破損
-        if (info.error != 0)
+        if (frameInfo.error != 0)
         {
             x->bufferlen = 0;
             return FMOD_ERR_FILE_BAD;
         }
 
         // bytesconsumedは恐らくデコードに成功したサイズ
-        if (info.bytesconsumed > x->bufferlen)
+        if (frameInfo.bytesconsumed > x->bufferlen)
         {
             x->bufferlen = 0;
         }
         else
         {
             // samplesが何を指してるか分からんがとりあえずゼロじゃないはず
-            if (info.samples != 0)
+            if (frameInfo.samples != 0)
             {
                 // デコードデータが無い場合はエラー
                 if (!buf)
                     return FMOD_ERR_INTERNAL;
 
                 // デコードに成功したサイズは勿論ゼロより大きいはず
-                if (info.bytesconsumed > 0)
+                if (frameInfo.bytesconsumed > 0)
                 {
                     // 全デコードサイズの領域確保（追記型）
-                    // bytesconsumed分のデコード後のサイズはinfo.samples * 2になるらしい（ホンマか？）
-                    decoded.resize(decoded.size() + info.samples * 2);
+                    // 1フレームのバイト数 = サンプル数 × 1サンプルあたりのバイト数
+                    const std::uint64_t frameBytes = frameInfo.samples * x->format.bytesPerSample;
+                    decoded.resize(decoded.size() + frameBytes);
+
                     // とりあえず全デコードデータへ今回のデコード分を追記
-                    std::memcpy(&decoded[read], buf, info.samples * 2);
+                    std::memcpy(&decoded[read], buf, frameBytes);
 
                     // データ部の位置をシーク
-                    position += info.bytesconsumed;
+                    position += frameInfo.bytesconsumed;
+
                     // 全デコード後のサイズを加算
-                    read += info.samples * 2;
+                    read += frameBytes;
                 }
             }
         }
     }
     // デコード後のサイズ
-    x->bufferlen = read;
-    // これは曲の長さを取得しているが、何故1/4なのか分からん
-    x->lengthpcm = read / 4;
+    x->bufferlen = static_cast<unsigned long>(read);
+    // lengthpcm = 総バイト数 ÷ チャンネル数 ÷ 1サンプルあたりのバイト数
+    x->lengthpcm = static_cast<std::uint32_t>(read / x->format.bytesPerSample / static_cast<unsigned int>(x->channels));
+
     // データ部の領域を使って全デコードデータをAPI連携させる為領域確保しなおし
     x->buffer.clear();
     x->buffer.resize(read);
@@ -375,7 +362,7 @@ FMOD_RESULT F_CALLBACK myCodec_open(FMOD_CODEC_STATE* codec, FMOD_MODE usermode,
     codec->numsubsounds = 0; //number of 'subsounds' in this sound.  For most codecs this is 0, only multi sound codecs such as FSB or CDDA have subsounds. 
 
     // API連携
-    codec->plugindata = x;
+    codec->plugindata = x.release();  // unique_ptrから所有権を手放してFMODへ渡す
 
     return FMOD_OK;
 };
@@ -399,24 +386,39 @@ FMOD_RESULT F_CALLBACK myCodec_close(FMOD_CODEC_STATE* codec)
 // readコールバック関数は、デコードしたデータを返すために使用されます。
 FMOD_RESULT F_CALLBACK myCodec_read(FMOD_CODEC_STATE* codec, void* buffer, unsigned int sizebytes, unsigned int* bytesread)
 {
-    // デコードしたデータをbufferにコピーする
-
-    // bufferは恐らくFMODが再生出来る領域
-    // sizebytesはFMOD側が確保してくれてる領域だと思う
-    // 何故か4倍した方が良かった
-	memset(buffer, 0, sizebytes * 4);
-
     // API連携データの取得
     info* x = (info*)codec->plugindata;
     if (!x || !bytesread)
         return FMOD_ERR_INTERNAL;
 
-    // 全デコードデータからFMODへ流す。何故か初期領域の4倍の量を渡したらうまくいった
-    std::memcpy(buffer, &x->buffer[x->position], sizebytes * 4);
-    // 再生位置の加算（もちろん4倍）
-    x->position += sizebytes * 4;
-    // 今回読み込んだデータサイズ（もちろん4倍　謎）
-    *bytesread = sizebytes * 4;
+    // 残りデータ量を計算
+    std::uint64_t remaining = x->bufferlen - x->position;
+
+    // 再生終了
+    if (remaining == 0)
+    {
+        *bytesread = 0;
+        return FMOD_ERR_FILE_EOF;
+    }
+
+    // 1サンプルのバイト数を計算
+
+    // FMODの要求量と残量の小さい方だけコピー（オーバーランしない）
+    unsigned int toCopy = static_cast<unsigned int>(
+        std::min(static_cast<std::uint64_t>(sizebytes * static_cast<unsigned int>(x->channels) * x->format.bytesPerSample), remaining)
+    );
+
+    // デコードしたデータをbufferにコピーする
+    // FMODのバッファ全体をゼロ初期化（末尾の無音保証）
+    memset(buffer, 0, toCopy + 1);
+    std::memcpy(buffer, &x->buffer[x->position], toCopy);
+
+    // 再生位置の加算
+    x->position += toCopy;
+
+    // 今回読み込んだデータサイズ
+    *bytesread = toCopy;
+
     return FMOD_OK;
 };
 
@@ -447,7 +449,7 @@ FMOD_RESULT F_CALLBACK myCodec_getposition(FMOD_CODEC_STATE* codec, unsigned int
         return FMOD_ERR_INTERNAL;
 
     // 再生位置を設定する
-    *position = x->position;
+    *position = static_cast<unsigned int>(x->position);
     return FMOD_OK;
 };
 
@@ -466,15 +468,15 @@ FMOD_RESULT F_CALLBACK myCodec_getWaveFormat(FMOD_CODEC_STATE* codec, int index,
 
     // PCMデータフォーマットの設定だと思う
     // 読み込んだAACデータを元に可変にしてあげるべきだろうけどやり方分からん
-    waveformat->channels = static_cast<int>(x->channels);
-    waveformat->format = FMOD_SOUND_FORMAT_PCM16;
-    waveformat->mode = FMOD_DEFAULT;
-    waveformat->frequency = x->sample_rates;
+    waveformat->channels    = static_cast<int>(x->channels);
+    waveformat->format      = x->format.fmodFormat;    // userexinfoに合わせたフォーマット
+    waveformat->mode        = FMOD_DEFAULT;
+    waveformat->frequency   = static_cast<int>(x->sample_rates);
     // この値ヘタにいじるとアクセス違反発生する
 //  waveformat->pcmblocksize = static_cast<int>(x->channels) * 2;      //    2 = 16bit pcm 
 //  waveformat->pcmblocksize = x->pcmblocks;
     // 曲の長さ
-    waveformat->lengthpcm = x->lengthpcm;// bytes converted to PCM samples ;
+    waveformat->lengthpcm   = static_cast<unsigned int>(x->lengthpcm);// bytes converted to PCM samples ;
 
     // オーディオファイルの形式情報を取得する
     return FMOD_OK;
@@ -507,15 +509,15 @@ FMOD_CODEC_DESCRIPTION myCodec = {
     "FMOD MP4/AAC Codec",           // コーデックの名前
     0x00010000,                     // ドライバーのバージョン番号
     0,                              // Default As Stream
-    FMOD_TIMEUNIT_PCMBYTES, // Timeunit
-    &myCodec_open,                   // openコールバック
-    &myCodec_close,                  // closeコールバック
-    &myCodec_read,                   // readコールバック
-    &myCodec_getlength,              // getlengthコールバック
-    &myCodec_setposition,            // setpositionコールバック
-    &myCodec_getposition,            // getpositionコールバック
-    &myCodec_soundcreated,           // soundcreatedコールバック
-    &myCodec_getWaveFormat           // getWaveFormatExコールバック
+    FMOD_TIMEUNIT_PCMBYTES,         // Timeunit
+    &myCodec_open,                  // openコールバック
+    &myCodec_close,                 // closeコールバック
+    &myCodec_read,                  // readコールバック
+    &myCodec_getlength,             // getlengthコールバック
+    &myCodec_setposition,           // setpositionコールバック
+    &myCodec_getposition,           // getpositionコールバック
+    &myCodec_soundcreated,          // soundcreatedコールバック
+    &myCodec_getWaveFormat          // getWaveFormatExコールバック
 };
 
 /*

@@ -166,6 +166,7 @@
     <ClInclude Include="..\fmod_dsp_effects.h" />
     <ClInclude Include="..\fmod_errors.h" />
     <ClInclude Include="..\fmod_output.h" />
+    <ClInclude Include="..\minimp4.h" />
     <ClInclude Include="..\neaacdec.h" />
   </ItemGroup>
   <ItemGroup>
