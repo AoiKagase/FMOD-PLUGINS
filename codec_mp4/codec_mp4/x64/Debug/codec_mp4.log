@@ -1,0 +1,11 @@
+﻿  ag_dec.c
+  ALACBitUtilities.c
+  dp_dec.c
+  EndianPortable.c
+  matrix_dec.c
+  コードを生成中...
+  ALACDecoder.cpp
+  main.cpp
+     ライブラリ H:\sourcecode\FMOD-AAC-CODEC\codec_mp4\x64\Debug\codec_mp4.lib とオブジェクト H:\sourcecode\FMOD-AAC-CODEC\codec_mp4\x64\Debug\codec_mp4.exp を作成中
+MSVCRTD.lib(initializers.obj) : warning LNK4098: defaultlib 'msvcrt.lib' は他のライブラリの使用と競合しています。/NODEFAULTLIB:library を使用してください。
+  codec_mp4.vcxproj -> H:\sourcecode\FMOD-AAC-CODEC\codec_mp4\x64\Debug\codec_mp4.dll

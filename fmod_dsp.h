@@ -1,13 +1,13 @@
 /* ======================================================================================== */
 /* FMOD Core API - DSP header file.                                                         */
-/* Copyright (c), Firelight Technologies Pty, Ltd. 2004-2022.                               */
+/* Copyright (c), Firelight Technologies Pty, Ltd. 2004-2026.                               */
 /*                                                                                          */
 /* Use this header if you are wanting to develop your own DSP plugin to use with FMODs      */
 /* dsp system.  With this header you can make your own DSP plugin that FMOD can             */
 /* register and use.  See the documentation and examples on how to make a working plugin.   */
 /*                                                                                          */
 /* For more detail visit:                                                                   */
-/* https://fmod.com/resources/documentation-api?version=2.0&page=plugin-api-dsp.html        */
+/* https://fmod.com/docs/2.03/api/plugin-api-dsp.html                                       */
 /* =========================================================================================*/
 #ifndef _FMOD_DSP_H
 #define _FMOD_DSP_H
@@ -67,6 +67,8 @@ typedef enum
     FMOD_DSP_PARAMETER_DATA_TYPE_FFT = -4,
     FMOD_DSP_PARAMETER_DATA_TYPE_3DATTRIBUTES_MULTI = -5,
     FMOD_DSP_PARAMETER_DATA_TYPE_ATTENUATION_RANGE = -6,
+    FMOD_DSP_PARAMETER_DATA_TYPE_DYNAMIC_RESPONSE = -7,
+    FMOD_DSP_PARAMETER_DATA_TYPE_FINITE_LENGTH = -8,
 } FMOD_DSP_PARAMETER_DATA_TYPE;
 
 /*
@@ -97,7 +99,7 @@ typedef FMOD_RESULT (F_CALL *FMOD_DSP_SYSTEM_MIX_CALLBACK)                (FMOD_
 typedef void *      (F_CALL *FMOD_DSP_ALLOC_FUNC)                         (unsigned int size, FMOD_MEMORY_TYPE type, const char *sourcestr);
 typedef void *      (F_CALL *FMOD_DSP_REALLOC_FUNC)                       (void *ptr, unsigned int size, FMOD_MEMORY_TYPE type, const char *sourcestr);
 typedef void        (F_CALL *FMOD_DSP_FREE_FUNC)                          (void *ptr, FMOD_MEMORY_TYPE type, const char *sourcestr);
-typedef void        (F_CALL *FMOD_DSP_LOG_FUNC)                           (FMOD_DEBUG_FLAGS level, const char *file, int line, const char *function, const char *string, ...);
+typedef void        (F_CALL *FMOD_DSP_LOG_FUNC)                           (FMOD_DEBUG_FLAGS level, const char *file, int line, const char *function, const char *str, ...);
 typedef FMOD_RESULT (F_CALL *FMOD_DSP_GETSAMPLERATE_FUNC)                 (FMOD_DSP_STATE *dsp_state, int *rate);
 typedef FMOD_RESULT (F_CALL *FMOD_DSP_GETBLOCKSIZE_FUNC)                  (FMOD_DSP_STATE *dsp_state, unsigned int *blocksize);
 typedef FMOD_RESULT (F_CALL *FMOD_DSP_GETSPEAKERMODE_FUNC)                (FMOD_DSP_STATE *dsp_state, FMOD_SPEAKERMODE *speakermode_mixer, FMOD_SPEAKERMODE *speakermode_output);
@@ -225,6 +227,17 @@ typedef struct FMOD_DSP_PARAMETER_FFT
     int     numchannels;
     float  *spectrum[32];
 } FMOD_DSP_PARAMETER_FFT;
+
+typedef struct FMOD_DSP_PARAMETER_DYNAMIC_RESPONSE
+{
+    int     numchannels;
+    float   rms[32];
+} FMOD_DSP_PARAMETER_DYNAMIC_RESPONSE;
+
+typedef struct FMOD_DSP_PARAMETER_FINITE_LENGTH
+{
+    FMOD_BOOL finite;
+} FMOD_DSP_PARAMETER_FINITE_LENGTH;
 
 typedef struct FMOD_DSP_DESCRIPTION
 {
@@ -380,6 +393,35 @@ typedef struct FMOD_DSP_METERING_INFO
     (_paramstruct).description  = _description; \
     (_paramstruct).datadesc.datatype     = _datatype;
 
+#define FMOD_DSP_DECLARE_PARAMDESC_FLOAT(_param, _name, _desc, _label, _min, _max, _default) \
+    static FMOD_DSP_PARAMETER_DESC _param = {FMOD_DSP_PARAMETER_TYPE_FLOAT, _name, _label, _desc}; \
+    _param.floatdesc.min = _min; \
+    _param.floatdesc.max = _max; \
+    _param.floatdesc.defaultval = _default; \
+    _param.floatdesc.mapping.type = FMOD_DSP_PARAMETER_FLOAT_MAPPING_TYPE_AUTO;
+
+#define FMOD_DSP_DECLARE_PARAMDESC_INT(_param, _name, _desc, _label, _min, _max, _default, _goestoinf) \
+    static FMOD_DSP_PARAMETER_DESC _param = {FMOD_DSP_PARAMETER_TYPE_INT, _name, _label, _desc}; \
+    _param.intdesc.min          = _min; \
+    _param.intdesc.max          = _max; \
+    _param.intdesc.defaultval   = _default; \
+    _param.intdesc.goestoinf    = _goestoinf;
+
+#define FMOD_DSP_DECLARE_PARAMDESC_ENUM(_param, _name, _desc, _valuenames, _default) \
+    static FMOD_DSP_PARAMETER_DESC _param = {FMOD_DSP_PARAMETER_TYPE_INT, _name, "", _desc}; \
+    _param.intdesc.valuenames = _valuenames; \
+    _param.intdesc.max = sizeof(_valuenames) / sizeof(_valuenames[0]) - 1; \
+    _param.intdesc.defaultval = _default;
+
+#define FMOD_DSP_DECLARE_PARAMDESC_BOOL(_param, _name, _desc, _valuenames, _default) \
+    static FMOD_DSP_PARAMETER_DESC _param = {FMOD_DSP_PARAMETER_TYPE_BOOL, _name, "", _desc}; \
+    _param.booldesc.valuenames = _valuenames; \
+    _param.booldesc.defaultval = _default;
+
+#define FMOD_DSP_DECLARE_PARAMDESC_DATA(_param, _name, _desc, _datatype) \
+    static FMOD_DSP_PARAMETER_DESC _param = {FMOD_DSP_PARAMETER_TYPE_DATA, _name, "", _desc}; \
+    _param.datadesc.datatype = _datatype;
+
 #define FMOD_DSP_ALLOC(_state, _size) \
     (_state)->functions->alloc(_size, FMOD_MEMORY_NORMAL, __FILE__)
 #define FMOD_DSP_REALLOC(_state, _ptr, _size) \
@@ -387,7 +429,7 @@ typedef struct FMOD_DSP_METERING_INFO
 #define FMOD_DSP_FREE(_state, _ptr) \
     (_state)->functions->free(_ptr, FMOD_MEMORY_NORMAL, __FILE__)
 #define FMOD_DSP_LOG(_state, _level, _location, _format, ...) \
-    (_state)->functions->log(_level, __FILE__, __LINE__, _location, _format, __VA_ARGS__)
+    (_state)->functions->log(_level, __FILE__, __LINE__, _location, _format, ##__VA_ARGS__)
 #define FMOD_DSP_GETSAMPLERATE(_state, _rate) \
     (_state)->functions->getsamplerate(_state, _rate)
 #define FMOD_DSP_GETBLOCKSIZE(_state, _blocksize) \
