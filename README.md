@@ -1,6 +1,11 @@
 # FMOD-PLUGINS
-FMODライブラリで利用できるプラグイン集です。  
-現在は非対応の形式に対応させるコーデックをメインに開発中です。
+Windows版FMODライブラリで利用できるプラグイン集です。  
+現在は非対応の形式に対応させるコーデックをメインに開発中です。  
+Windows用なので全てVisualStudio2026でのプロジェクト構成となっています。  
+  
+This is a collection of plugins available for the Windows version of the FMOD library.  
+We are currently focusing on developing codecs that support formats not currently supported.  
+Since this is for Windows, all projects are configured using Visual Studio 2026.  
 
 ## codec_mp4
 * MP4コンテナに格納されたAAC/ALACを再生するコーデックです。  
