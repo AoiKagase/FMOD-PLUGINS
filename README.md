@@ -1,15 +1,34 @@
-# Fmod-MP4AAC-Codec
-FMODライブラリを利用してiTunes製M4A/AACを再生するコーデックです。<br>
-Codec to play iTunes MP4/AAC using FMOD library.<br>
+# FMOD-CODEC-PLUGINS
+FMODライブラリを利用する際、非対応の形式に対応させるコーデックプラグイン集です。
 
-タグの解析を無理やり行っているため、iTunes以外のM4A/AACではタグ解析に失敗する可能性があります。<br>
-Because tag analysis is performed for iTunes, tag analysis may fail for non-iTunes M4A/AAC.<br>
+## codec_mp4
+* MP4コンテナに格納されたAAC/ALACを再生するコーデックです。<br>
+  This is a codec for playing AAC/ALAC files stored in an MP4 container, using FMOD library.<br>
 
+## codec_ape
+* Monkey's Audio (APE)形式を再生するコーデックです。<br>
+  This is a codec for playing Monkey's Audio (APE) files.
+
+## codec_tak
+* Tom's lossless Audio Kompressor (TAK)形式を再生するコーデックです。<br>
+  This is a codec that plays files in the Tom's Lossless Audio Kompressor (TAK) format.
+  
+## codec_tta
+* The True Audio (TTA)形式を再生するコーデックです。<br>
+  This is a codec that plays the True Audio (TTA) format.
+  
+## codec_wv
+* WavPack (WV)形式を再生するコーデックです。<br>
+  This is a codec for playing WavPack (WV) files.
+
+
+#
 利用に際してはFMODライブラリのドキュメントを参照してください。<br>
 Please refer to the FMOD library documentation for details.<br>
-<br>
+<hr>
 C# Example.<br>
-```C#
+
+```
 public void LoadPlugins()
 {
 	uint handle;
