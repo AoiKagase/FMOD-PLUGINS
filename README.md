@@ -17,7 +17,7 @@ Since this is for Windows, all projects are configured using Visual Studio 2026.
 
 ## codec_tak
 * Tom's lossless Audio Kompressor (TAK)形式を再生するコーデックです。  
-  利用には別途`tak_deco_lib.dll`が必要です。
+  利用には別途`tak_deco_lib.dll`が必要です。  
   This is a codec that plays files in the Tom's Lossless Audio Kompressor (TAK) format.  
   You will need the `tak_deco_lib.dll` file separately to use this.
 
