@@ -8,10 +8,10 @@
 //
 // 必要なファイル:
 //   wavpack/include/wavpack.h
-//   wavpack/lib/x64/Release/wavpack.lib
-//   wavpack/lib/x64/Debug/wavpack.lib
-//   wavpack/lib/Win32/Release/wavpack.lib
-//   wavpack/lib/Win32/Debug/wavpack.lib
+//   wavpack/lib/x64/Release/libwavpack.lib
+//   wavpack/lib/x64/Debug/libwavpack.lib
+//   wavpack/lib/Win32/Release/libwavpack.lib
+//   wavpack/lib/Win32/Debug/libwavpack.lib
 //
 // ビルド方法 (CMake):
 //   cmake -S . -B build -DBUILD_SHARED_LIBS=OFF
@@ -300,8 +300,7 @@ static FMOD_RESULT F_CALL wvCodec_open(FMOD_CODEC_STATE* codec, FMOD_MODE /*user
     x->waveFormat.channels       = nChannels;
     x->waveFormat.frequency      = sampleRate;
     x->waveFormat.pcmblocksize   = nChannels * fmt.bytesPerSample;
-    x->waveFormat.pcmbytes       = static_cast<unsigned int>(x->buffer.size());
-    x->waveFormat.lengthpcmbytes = static_cast<unsigned int>(x->buffer.size());
+    x->waveFormat.lengthpcm      = static_cast<unsigned int>(nFrames); // PCMフレーム数（バイト数ではない）
 
     codec->plugindata = x;
     codec->waveformat = &x->waveFormat;
@@ -310,7 +309,7 @@ static FMOD_RESULT F_CALL wvCodec_open(FMOD_CODEC_STATE* codec, FMOD_MODE /*user
     auto setTag = [&](const std::string& val, const char* key)
     {
         if (val.empty()) return;
-        codec->functions->setmetadata(codec,
+        codec->functions->metadata(codec,
             FMOD_TAGTYPE_USER, const_cast<char*>(key),
             const_cast<char*>(val.c_str()),
             static_cast<unsigned int>(val.size() + 1),
@@ -340,14 +339,15 @@ static FMOD_RESULT F_CALL wvCodec_read(FMOD_CODEC_STATE* codec,
     void* buffer, unsigned int sizebytes, unsigned int* bytesread)
 {
     auto* x = reinterpret_cast<WvInfo*>(codec->plugindata);
-    const uint64_t remaining = static_cast<uint64_t>(x->buffer.size()) - x->position;
-    if (remaining == 0)
+    const uint64_t bufSize = static_cast<uint64_t>(x->buffer.size());
+    if (x->position >= bufSize)
     {
         *bytesread = 0;
         return FMOD_ERR_FILE_EOF;
     }
+    const uint64_t remaining = bufSize - x->position;
     const unsigned int toCopy = static_cast<unsigned int>(
-        std::min(static_cast<uint64_t>(sizebytes), remaining));
+        std::min(static_cast<uint64_t>(sizebytes * x->channels * x->bytesPerSample), remaining));
     memcpy(buffer, x->buffer.data() + x->position, toCopy);
     x->position += toCopy;
     *bytesread   = toCopy;
@@ -362,7 +362,8 @@ static FMOD_RESULT F_CALL wvCodec_setposition(FMOD_CODEC_STATE* codec,
 {
     auto* x = reinterpret_cast<WvInfo*>(codec->plugindata);
     if (postype == FMOD_TIMEUNIT_PCMBYTES)
-        x->position = position;
+        x->position = std::min(static_cast<uint64_t>(position),
+                               static_cast<uint64_t>(x->buffer.size()));
     return FMOD_OK;
 }
 
@@ -384,8 +385,7 @@ static FMOD_RESULT F_CALL wvCodec_getlength(FMOD_CODEC_STATE* codec,
     return FMOD_OK;
 }
 
-static FMOD_RESULT F_CALL wvCodec_soundcreated(FMOD_CODEC_STATE* /*codec*/,
-    int /*subsound*/, FMOD_CREATESOUNDEXINFO* /*exinfo*/)
+static FMOD_RESULT F_CALL wvCodec_soundcreated(FMOD_CODEC_STATE* codec, int subsound, FMOD_SOUND* sound)
 {
     return FMOD_OK;
 }
@@ -409,17 +409,23 @@ static FMOD_CODEC_DESCRIPTION s_wvCodecDesc =
     0x00010000,
     1,
     FMOD_TIMEUNIT_PCMBYTES,
-    wvCodec_open,
-    wvCodec_close,
-    wvCodec_read,
-    wvCodec_getlength,
-    wvCodec_setposition,
-    wvCodec_getposition,
-    wvCodec_soundcreated,
-    wvCodec_getwaveformat
+    &wvCodec_open,
+    &wvCodec_close,
+    &wvCodec_read,
+    &wvCodec_getlength,
+    &wvCodec_setposition,
+    &wvCodec_getposition,
+    &wvCodec_soundcreated,
+    &wvCodec_getwaveformat
 };
 
-extern "C" FMOD_CODEC_DESCRIPTION* F_CALL FMODGetCodecDescription()
-{
-    return &s_wvCodecDesc;
+#ifdef __cplusplus
+extern "C" {
+#endif
+    __declspec(dllexport) FMOD_CODEC_DESCRIPTION* F_API FMODGetCodecDescription()
+    {
+        return &s_wvCodecDesc;
+    }
+#ifdef __cplusplus
 }
+#endif

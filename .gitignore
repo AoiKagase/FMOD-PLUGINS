@@ -50,3 +50,5 @@
 /codec_tta/libtta/*.h
 /codec_tta/libtta/*.cpp
 /CLAUDE.md
+/codec_srla/codec_srla
+/codec_wv/codec_wv
