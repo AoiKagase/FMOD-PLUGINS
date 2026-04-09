@@ -52,3 +52,7 @@
 /CLAUDE.md
 /codec_srla/codec_srla
 /codec_wv/codec_wv
+/codec_opus/codec_opus/x64
+/codec_opus/third_party/build
+/codec_opus/third_party/installed
+/codec_wma/codec_wma/x64
