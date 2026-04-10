@@ -1,0 +1,39 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "FMOD-PLUGINS", "FMOD-PLUGINS.vcxproj", "{C9D6DDA8-19A5-45A0-9B87-6C5CB1E45610}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		ape|x64 = ape|x64
+		mp4|x64 = mp4|x64
+		opus|x64 = opus|x64
+		srla|x64 = srla|x64
+		tak|x64 = tak|x64
+		tta|x64 = tta|x64
+		wma|x64 = wma|x64
+		wv|x64 = wv|x64
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{C9D6DDA8-19A5-45A0-9B87-6C5CB1E45610}.ape|x64.ActiveCfg = ape|x64
+		{C9D6DDA8-19A5-45A0-9B87-6C5CB1E45610}.ape|x64.Build.0 = ape|x64
+		{C9D6DDA8-19A5-45A0-9B87-6C5CB1E45610}.mp4|x64.ActiveCfg = mp4|x64
+		{C9D6DDA8-19A5-45A0-9B87-6C5CB1E45610}.mp4|x64.Build.0 = mp4|x64
+		{C9D6DDA8-19A5-45A0-9B87-6C5CB1E45610}.opus|x64.ActiveCfg = opus|x64
+		{C9D6DDA8-19A5-45A0-9B87-6C5CB1E45610}.opus|x64.Build.0 = opus|x64
+		{C9D6DDA8-19A5-45A0-9B87-6C5CB1E45610}.srla|x64.ActiveCfg = srla|x64
+		{C9D6DDA8-19A5-45A0-9B87-6C5CB1E45610}.srla|x64.Build.0 = srla|x64
+		{C9D6DDA8-19A5-45A0-9B87-6C5CB1E45610}.tak|x64.ActiveCfg = tak|x64
+		{C9D6DDA8-19A5-45A0-9B87-6C5CB1E45610}.tak|x64.Build.0 = tak|x64
+		{C9D6DDA8-19A5-45A0-9B87-6C5CB1E45610}.tta|x64.ActiveCfg = tta|x64
+		{C9D6DDA8-19A5-45A0-9B87-6C5CB1E45610}.tta|x64.Build.0 = tta|x64
+		{C9D6DDA8-19A5-45A0-9B87-6C5CB1E45610}.wma|x64.ActiveCfg = wma|x64
+		{C9D6DDA8-19A5-45A0-9B87-6C5CB1E45610}.wma|x64.Build.0 = wma|x64
+		{C9D6DDA8-19A5-45A0-9B87-6C5CB1E45610}.wv|x64.ActiveCfg = wv|x64
+		{C9D6DDA8-19A5-45A0-9B87-6C5CB1E45610}.wv|x64.Build.0 = wv|x64
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+EndGlobal

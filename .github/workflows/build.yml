@@ -1,0 +1,38 @@
+name: build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        codec: [ape, mp4, opus, srla, tta, wma, wv]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: microsoft/setup-msbuild@v2
+
+      - name: Configure PowerShell
+        shell: pwsh
+        run: Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process
+
+      - name: Fetch dependencies
+        shell: pwsh
+        run: ./scripts/fetch-dependencies.ps1
+
+      - name: Build ${{ matrix.codec }}
+        shell: pwsh
+        run: msbuild FMOD-PLUGINS.vcxproj /m /p:Configuration=${{ matrix.codec }} /p:Platform=x64
+
+      - name: Upload ${{ matrix.codec }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.codec }}
+          path: build/${{ matrix.codec }}/x64/*.dll
+          if-no-files-found: error

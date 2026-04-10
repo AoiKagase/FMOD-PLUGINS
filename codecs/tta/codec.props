@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <Target Name="CheckTtaDeps" BeforeTargets="PrepareForBuild">
+    <Error Condition="!Exists('$(DepsDir)src\tta\libtta.h')" Text="TTA sources are missing. Run scripts/fetch-dependencies.ps1 first." />
+    <Error Condition="!Exists('$(DepsDir)src\tta\libtta.cpp')" Text="TTA sources are missing. Run scripts/fetch-dependencies.ps1 first." />
+  </Target>
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <AdditionalIncludeDirectories>$(DepsDir)src\tta;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <ClCompile Include="$(ProjectDir)codecs\tta\main.cpp" />
+    <ClCompile Include="$(DepsDir)src\tta\libtta.cpp">
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+  </ItemGroup>
+</Project>

@@ -1,58 +1,23 @@
-# Prerequisites
-*.d
-
-# Compiled Object files
-*.slo
-*.lo
-*.o
-*.obj
-
-# Precompiled Headers
-*.gch
-*.pch
-
-# Compiled Dynamic libraries
-*.so
-*.dylib
-*.dll
-
-# Fortran module files
-*.mod
-*.smod
-
-# Compiled Static libraries
-*.lai
-*.la
-*.a
-
-# Executables
-*.exe
-*.out
-*.app
 .vs/
-*/Debug/
-*/Release/
-*/x64/
 .claude/
-/codec_mp4/codec_mp4
-/codec_mp4/alac/*.h
-/codec_mp4/alac/*.c
-/codec_mp4/alac/*.cpp
-/codec_ape/codec_ape
-/codec_ape/mac/*.h
-/codec_ape/mac/*.cpp
-/codec_ape/mac/lib/x64/Debug
-/codec_ape/mac/lib/x64/Release
-/codec_tak/tak/lib
-/codec_tak/tak/*.h
-/codec_tak/codec_tak
-/codec_tta/codec_tta
-/codec_tta/libtta/*.h
-/codec_tta/libtta/*.cpp
+build/
+deps/
+obj/
+*.obj
+*.pch
+*.pdb
+*.ilk
+*.iobj
+*.ipdb
+*.dll
+*.exe
+*.lib
+*.exp
+*.user
+*.VC.db
+*.opendb
+*.suo
+**/Debug/
+**/Release/
+**/x64/
 /CLAUDE.md
-/codec_srla/codec_srla
-/codec_wv/codec_wv
-/codec_opus/codec_opus/x64
-/codec_opus/third_party/build
-/codec_opus/third_party/installed
-/codec_wma/codec_wma/x64

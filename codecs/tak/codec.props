@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <Target Name="CheckTakDeps" BeforeTargets="PrepareForBuild">
+    <Error Condition="!Exists('$(DepsDir)src\tak\tak_deco_lib.h')" Text="TAK SDK headers are missing. Set TAK_SDK_URL and run scripts/fetch-dependencies.ps1 first." />
+  </Target>
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <AdditionalIncludeDirectories>$(DepsDir)src\tak;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <ClCompile Include="$(ProjectDir)codecs\tak\main.cpp" />
+  </ItemGroup>
+</Project>

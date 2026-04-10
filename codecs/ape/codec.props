@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <Target Name="CheckApeDeps" BeforeTargets="PrepareForBuild">
+    <Error Condition="!Exists('$(DepsDir)src\ape\All.h')" Text="APE dependencies are missing. Run scripts/fetch-dependencies.ps1 first." />
+    <Error Condition="!Exists('$(DepsDir)lib\ape\$(Platform)\Release\MACLib.lib')" Text="APE library is missing. Run scripts/fetch-dependencies.ps1 first." />
+  </Target>
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <AdditionalIncludeDirectories>$(DepsDir)src\ape;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+    <Link>
+      <AdditionalDependencies>MACLib.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>$(DepsDir)lib\ape\$(Platform)\Release;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <ClCompile Include="$(ProjectDir)codecs\ape\main.cpp" />
+  </ItemGroup>
+</Project>

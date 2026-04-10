@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <Target Name="CheckMp4Deps" BeforeTargets="PrepareForBuild">
+    <Error Condition="!Exists('$(DepsDir)src\mp4\neaacdec.h')" Text="MP4 dependencies are missing. Run scripts/fetch-dependencies.ps1 first." />
+    <Error Condition="!Exists('$(DepsDir)src\mp4\minimp4.h')" Text="minimp4 is missing. Run scripts/fetch-dependencies.ps1 first." />
+    <Error Condition="!Exists('$(DepsDir)src\mp4\alac\ALACDecoder.cpp')" Text="ALAC sources are missing. Run scripts/fetch-dependencies.ps1 first." />
+    <Error Condition="!Exists('$(DepsDir)lib\faad2\$(Platform)\Release\libfaad.lib')" Text="FAAD2 library is missing. Run scripts/fetch-dependencies.ps1 first." />
+  </Target>
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <AdditionalIncludeDirectories>$(DepsDir)src\mp4;$(DepsDir)src\mp4\alac;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+    <Link>
+      <AdditionalDependencies>libfaad.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>$(DepsDir)lib\faad2\$(Platform)\Release;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <ClCompile Include="$(ProjectDir)codecs\mp4\main.cpp" />
+    <ClCompile Include="$(DepsDir)src\mp4\alac\ag_dec.c">
+      <DisableSpecificWarnings>4146;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+      <SDLCheck>false</SDLCheck>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="$(DepsDir)src\mp4\alac\ALACBitUtilities.c">
+      <DisableSpecificWarnings>4146;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+      <SDLCheck>false</SDLCheck>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="$(DepsDir)src\mp4\alac\ALACDecoder.cpp">
+      <DisableSpecificWarnings>4146;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+      <SDLCheck>false</SDLCheck>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="$(DepsDir)src\mp4\alac\dp_dec.c">
+      <DisableSpecificWarnings>4146;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+      <SDLCheck>false</SDLCheck>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="$(DepsDir)src\mp4\alac\EndianPortable.c">
+      <DisableSpecificWarnings>4146;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+      <SDLCheck>false</SDLCheck>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="$(DepsDir)src\mp4\alac\matrix_dec.c">
+      <DisableSpecificWarnings>4146;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+      <SDLCheck>false</SDLCheck>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+  </ItemGroup>
+</Project>
