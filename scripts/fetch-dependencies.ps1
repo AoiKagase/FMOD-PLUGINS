@@ -219,28 +219,13 @@ function Patch-OpusFileCMake {
     }
 
     $content = Get-Content -LiteralPath $cmakeFile -Raw
-    $old = @'
-include(OpusFilePackageVersion)
-get_package_version(PACKAGE_VERSION PROJECT_VERSION)
-string(REPLACE "." ";" PROJECT_VERSION_LIST ${PROJECT_VERSION})
-list(GET PROJECT_VERSION_LIST 0 PROJECT_VERSION_MAJOR)
-list(GET PROJECT_VERSION_LIST 1 PROJECT_VERSION_MINOR)
-'@
-    $new = @'
-include(OpusFilePackageVersion)
-get_package_version(PACKAGE_VERSION PROJECT_VERSION)
-if(NOT PROJECT_VERSION MATCHES "^[0-9]+\\.[0-9]+")
-  set(PROJECT_VERSION "0.1.0")
-endif()
-string(REPLACE "." ";" PROJECT_VERSION_LIST ${PROJECT_VERSION})
-list(GET PROJECT_VERSION_LIST 0 PROJECT_VERSION_MAJOR)
-list(GET PROJECT_VERSION_LIST 1 PROJECT_VERSION_MINOR)
-'@
-
-    if ($content.Contains($old)) {
-        $content = $content.Replace($old, $new)
-        Set-Content -LiteralPath $cmakeFile -Value $content -NoNewline
-    }
+    $content = [System.Text.RegularExpressions.Regex]::Replace(
+        $content,
+        "get_package_version\s*\(\s*PACKAGE_VERSION\s+PROJECT_VERSION\s*\)",
+        "get_package_version(PACKAGE_VERSION PROJECT_VERSION)`nif(NOT PROJECT_VERSION MATCHES `"^[0-9]+\\.[0-9]+`")`n  set(PROJECT_VERSION `"0.1.0`")`nendif()",
+        "SingleLine"
+    )
+    Set-Content -LiteralPath $cmakeFile -Value $content -NoNewline
 }
 
 function Invoke-CMakeBuild {
