@@ -137,6 +137,24 @@ function Copy-BestLibMatch {
     Copy-Item -LiteralPath $best.FullName -Destination $Destination -Force
 }
 
+function Copy-BestLibMatchAny {
+    param(
+        [string]$SourceRoot,
+        [string[]]$Filters,
+        [string]$Destination
+    )
+
+    foreach ($filter in $Filters) {
+        $matches = Get-ChildItem -LiteralPath $SourceRoot -Recurse -File -Filter $filter
+        if ($matches) {
+            Copy-BestLibMatch -SourceRoot $SourceRoot -Filter $filter -Destination $Destination
+            return
+        }
+    }
+
+    throw "Could not find any of the following under $SourceRoot: $($Filters -join ', ')"
+}
+
 function Copy-Files {
     param(
         [string]$SourceRoot,
@@ -370,7 +388,7 @@ Invoke-CMakeBuild -Name "wavpack" -SourceDir $wvRoot -BuildDir $wvBuild -Configu
     "-D", "BUILD_TESTING=OFF",
     "-D", "WAVPACK_BUILD_PROGRAMS=OFF"
 )
-Copy-BestLibMatch -SourceRoot $wvBuild -Filter "libwavpack.lib" -Destination (Join-Path $libRoot "wv\$Platform\Release\libwavpack.lib")
+Copy-BestLibMatchAny -SourceRoot $wvBuild -Filters @("libwavpack.lib", "libwavpack.a") -Destination (Join-Path $libRoot "wv\$Platform\Release\libwavpack.lib")
 
 Write-Host "==> Preparing libtta++"
 $ttaRoot = Expand-Download -Name "tta" -Url $ttaUrl -ArchiveType "tar.gz"
