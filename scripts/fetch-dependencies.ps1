@@ -195,30 +195,12 @@ function Patch-MonkeysAudioCMake {
     }
 
     $content = Get-Content -LiteralPath $cmakeFile -Raw
-    $old = @'
-# Show all the warnings (hopefully there aren't any!)
-add_compile_options(-Wall -Wextra)
-
-if(HAVE_WPEDANTIC_FLAG)
-  add_compile_options(-Wpedantic)
-endif()
-'@
-    $new = @'
-# Show all the warnings (hopefully there aren't any!)
-if(MSVC)
-  add_compile_options(/W4)
-else()
-  add_compile_options(-Wall -Wextra)
-
-  if(HAVE_WPEDANTIC_FLAG)
-    add_compile_options(-Wpedantic)
-  endif()
-endif()
-'@
-
-    if ($content.Contains($old)) {
-        $content = $content.Replace($old, $new)
-    }
+    $content = [System.Text.RegularExpressions.Regex]::Replace(
+        $content,
+        "add_compile_options\s*\(\s*-Wall\s+-Wextra\s*\)",
+        "if(MSVC)`n  add_compile_options(/W4)`nelse()`n  add_compile_options(-Wall -Wextra)`nendif()",
+        "SingleLine"
+    )
 
     $content = [System.Text.RegularExpressions.Regex]::Replace(
         $content,
