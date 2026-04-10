@@ -1,3 +1,11 @@
+This license applies to the original code in this repository authored for the
+FMOD-AAC-CODEC project, except where a file or directory is covered by another
+license or by third-party terms.
+
+Third-party SDK headers, imported source files, and generated dependency trees
+are not relicensed by this file. See `THIRD_PARTY_NOTICES.md` for dependency
+license notes and redistribution caveats.
+
 MIT License
 
 Copyright (c) 2024 加賀瀬 葵
