@@ -237,14 +237,14 @@ function Invoke-CMakeBuild {
         [switch]$Install
     )
     Ensure-Directory -Path $BuildDir
-    & cmake --fresh -S $SourceDir -B $BuildDir -G $cmakeGenerator -D "CMAKE_BUILD_TYPE=Release" @ConfigureArgs
+    & cmake --fresh -S $SourceDir -B $BuildDir -G $cmakeGenerator -A x64 -D "CMAKE_BUILD_TYPE=Release" @ConfigureArgs
     if ($LASTEXITCODE -ne 0) { throw "cmake configure failed for $Name" }
 
-    & cmake --build $BuildDir
+    & cmake --build $BuildDir --config Release
     if ($LASTEXITCODE -ne 0) { throw "cmake build failed for $Name" }
 
     if ($Install) {
-        & cmake --install $BuildDir
+        & cmake --install $BuildDir --config Release
         if ($LASTEXITCODE -ne 0) { throw "cmake install failed for $Name" }
     }
 }
