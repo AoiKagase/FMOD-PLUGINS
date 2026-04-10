@@ -6,12 +6,8 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
+  prepare-dependencies:
     runs-on: windows-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        codec: [ape, mp4, opus, srla, tta, wma, wv]
 
     steps:
       - uses: actions/checkout@v4
@@ -25,6 +21,32 @@ jobs:
       - name: Fetch dependencies
         shell: pwsh
         run: ./scripts/fetch-dependencies.ps1
+
+      - name: Upload dependencies
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependencies
+          path: deps
+          if-no-files-found: error
+
+  build:
+    needs: prepare-dependencies
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        codec: [ape, mp4, opus, srla, tta, wma, wv]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: microsoft/setup-msbuild@v2
+
+      - name: Download dependencies
+        uses: actions/download-artifact@v4
+        with:
+          name: dependencies
+          path: .
 
       - name: Build ${{ matrix.codec }}
         shell: pwsh
