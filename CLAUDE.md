@@ -4,45 +4,85 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## プロジェクト概要
 
-FMODオーディオライブラリ用のカスタムコーデックプラグイン。iTunes作成のM4A/AACファイルを再生可能にするWindows DLL。FMOD Core APIのコーデックプラグインインターフェースを実装し、FAAD2デコーダーとminimp4パーサーを使用してAAC→PCM変換を行う。
+FMODオーディオライブラリ用のWindowsコーデックプラグイン集（x64）。FMOD Core APIのコーデックプラグインインターフェースを実装し、以下のフォーマットを再生可能にする：
 
-**重要な制限:** タグ解析はiTunes作成のM4A/AACファイルに最適化されており、非iTunesファイルでは失敗する場合がある。
+| コーデック | 対応フォーマット | 依存ライブラリ |
+|-----------|-------------|------------|
+| ape       | Monkey's Audio (.ape) | Monkey's Audio SDK |
+| mp4       | M4A/AAC/ALAC (.m4a) | FAAD2, Apple ALAC, minimp4 |
+| opus      | Ogg Opus (.opus) | opus, opusfile, ogg |
+| srla      | SRLA (.srla) | SRLA |
+| tak       | TAK (.tak) | TAK SDK（要別途入手） |
+| tta       | TTA (.tta) | libtta++ |
+| wma       | WMA (.wma) | Windows Media Foundation |
+| wv        | WavPack (.wv) | WavPack |
+
+**mp4コーデックの制限:** メタデータ解析はiTunes作成のM4A/AACファイルに最適化。
 
 ## ビルド方法
 
-Visual Studio 2022でビルドする：
+Visual Studio 2026でビルドする。
 
-```
-codec_mp4/codec_mp4.sln
-```
+### 事前準備（初回・依存更新時）
 
-ビルド構成：`Debug|Win32`、`Release|Win32`、`Debug|x64`、`Release|x64`
-
-コマンドラインビルド（MSBuild）:
-```bash
-msbuild codec_mp4/codec_mp4.sln /p:Configuration=Release /p:Platform=x64
+```powershell
+.\scripts\fetch-dependencies.ps1
 ```
 
-出力DLL：`codec_mp4/x64/Release/codec_mp4.dll`（または対応するディレクトリ）
+依存ライブラリをダウンロードし `deps/` に配置する。TAK SDKのみ事前に環境変数を設定：
+
+```powershell
+$env:TAK_SDK_URL = "https://..."  # TAK SDKのURL（未公開SDKのため別途入手）
+```
+
+### コマンドラインビルド（MSBuild）
+
+```powershell
+# 単一コーデック（Configuration にコーデック名を指定）
+msbuild FMOD-PLUGINS.vcxproj /m /p:Configuration=mp4 /p:Platform=x64
+
+# 出力先: build\<codec>\x64\codec_<codec>.dll
+# 例:     build\mp4\x64\codec_mp4.dll
+```
 
 ## アーキテクチャ
 
-### プラグイン構造
+### プロジェクト構造
 
-`main.cpp`が唯一の実装ファイル。FMODコーデックコールバックを以下の流れで実装：
+単一の `FMOD-PLUGINS.vcxproj` が全コーデックをビルド構成（`Configuration`）で切り替える。
+各コーデックは独立した実装ファイルとプロパティファイルで構成される：
 
-1. **Open** (`myCodec_open`): MP4コンテナを解析→mdatボックスを特定→AACフレームデータ抽出→FAAD2初期化→全AACストリームをPCMにデコード→iTunesメタデータ抽出
-2. **Read** (`myCodec_read`): デコード済みPCMバッファからデータを返す
-3. **Seek** (`myCodec_setposition`/`myCodec_getposition`): 再生位置管理
-4. **Close** (`myCodec_close`): FAAD2デコーダーとバッファの解放
+```
+codecs/<name>/main.cpp       # FMODコーデックコールバック実装
+codecs/<name>/codec.props    # インクルード/ライブラリパス、追加ソースファイル定義
+```
 
-### 主要な型・構造体
+FMOD Core APIのヘッダー（`fmod*.h`）はプロジェクトルートに配置済み。
+依存ライブラリは `deps/` に `scripts/fetch-dependencies.ps1` で生成する（gitignore対象）。
 
-- `info`: コーデック状態（AAC デコーダハンドル、PCMバッファ、フォーマット情報、メタデータ）
-- `MP4HEADER`: MP4ボックス解析用（size, header, data）
-- `PCMFormatInfo`: FMODとFAAD2のPCMフォーマットのマッピング
+### FMODコーデックコールバックパターン（全コーデック共通）
 
-### 出力フォーマット対応
+各コーデックが `FMOD_CODEC_DESCRIPTION` を定義し、以下のコールバックを実装する：
+
+1. **Open** (`myCodec_open`): ファイル解析→デコーダ初期化→全フレームをPCMに事前デコード→バッファ蓄積
+2. **Read** (`myCodec_read`): 事前デコード済みPCMバッファからデータを返す
+3. **Seek/Position** (`myCodec_setposition`/`myCodec_getposition`): バッファ内位置管理
+4. **Close** (`myCodec_close`): デコーダとバッファの解放
+
+### mp4コーデックの詳細（`codecs/mp4/main.cpp`）
+
+AACとALACの両形式を1つの実装で対応する。Open時にコーデック種別を判定：
+
+- **AAC**: minimp4でコンテナ解析 → FAAD2で全フレームデコード
+- **ALAC**: minimp4でコンテナ解析 → Apple ALACDecoderで全フレームデコード
+  - `payload_bytes`バグ回避のため stco/stsz/stsc をファイルから直接読み取る
+
+**主要な型:**
+- `info`: コーデック状態（デコーダハンドル、PCMバッファ、フォーマット情報、メタデータ）
+- `AlacFrameTable`: ALACフレームオフセット・サイズテーブル（stco/stsz/stscから構築）
+- `PCMFormatInfo`: FMODとデコーダのPCMフォーマットのマッピング
+
+**出力フォーマット対応（AAC）:**
 
 | FMODフォーマット | FAAD2フォーマット | バイト/サンプル |
 |-----------------|-----------------|--------------|
@@ -50,12 +90,6 @@ msbuild codec_mp4/codec_mp4.sln /p:Configuration=Release /p:Platform=x64
 | PCM32 | FAAD_FMT_32BIT | 4 |
 | PCM24 | FAAD_FMT_24BIT | 3 |
 | PCM16 (デフォルト) | FAAD_FMT_16BIT | 2 |
-
-### 依存ライブラリ
-
-- **FAAD2**: `libfaad.lib`（プリコンパイル済み、`#pragma comment`でリンク）、`neaacdec.h`で宣言
-- **minimp4**: ヘッダーオンリー（`minimp4.h`）、MP4コンテナ解析とメタデータ抽出
-- **FMOD Core API**: ヘッダーのみ（`fmod*.h`）、コーデックプラグインインターフェース定義
 
 ## FMODプラグインの使用方法（C#）
 
