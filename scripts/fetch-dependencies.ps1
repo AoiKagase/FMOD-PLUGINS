@@ -111,6 +111,9 @@ function Copy-BestLibMatch {
 
     $matches = Get-ChildItem -LiteralPath $SourceRoot -Recurse -File -Filter $Filter
     if (-not $matches) {
+        $matches = Get-ChildItem -LiteralPath $SourceRoot -Recurse -File | Where-Object { $_.BaseName -like $Filter.Replace("*.", "*") -or $_.Name -like $Filter.Replace("*.", "*") }
+    }
+    if (-not $matches) {
         throw "Could not find $Filter under $SourceRoot"
     }
 
@@ -124,6 +127,8 @@ function Copy-BestLibMatch {
                 if ($path -match '\\win32\\') { $score -= 100 }
                 if ($path -match '\\debug\\') { $score -= 50 }
                 if ($path -match 'macdll') { $score -= 25 }
+                if ($path -match '\.lib$') { $score += 10 }
+                if ($path -match '\.a$') { $score += 5 }
                 $score
             }
             Descending = $true
