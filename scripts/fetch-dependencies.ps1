@@ -152,7 +152,7 @@ function Copy-BestLibMatchAny {
         }
     }
 
-    throw "Could not find any of the following under $SourceRoot: $($Filters -join ', ')"
+    throw "Could not find any of the following under ${SourceRoot}: $($Filters -join ', ')"
 }
 
 function Copy-Files {
