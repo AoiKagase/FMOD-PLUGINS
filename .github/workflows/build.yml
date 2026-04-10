@@ -46,7 +46,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: dependencies
-          path: .
+          path: deps
 
       - name: Build ${{ matrix.codec }}
         shell: pwsh
