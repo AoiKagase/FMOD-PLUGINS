@@ -179,6 +179,44 @@ static bool find_box(FMOD_CODEC_STATE* codec,
     return false;
 }
 
+static bool read_track_sample_entry_type(FMOD_CODEC_STATE* codec,
+                                         uint32_t totalSize,
+                                         unsigned int trackIdx,
+                                         char outType[5])
+{
+    uint64_t ds, dz, be;
+    if (!find_box(codec, 0, totalSize, "moov", ds, dz, be)) return false;
+    const uint64_t moov_data = ds, moov_end = be;
+
+    uint64_t trak_search = moov_data;
+    uint64_t trak_data = 0, trak_end = 0;
+    for (unsigned int t = 0; ; t++)
+    {
+        if (!find_box(codec, trak_search, moov_end, "trak", ds, dz, be)) return false;
+        trak_search = be;
+        if (t == trackIdx) { trak_data = ds; trak_end = be; break; }
+    }
+
+    uint64_t mdia_ds, mdia_dz, mdia_be;
+    if (!find_box(codec, trak_data, trak_end, "mdia", mdia_ds, mdia_dz, mdia_be)) return false;
+    uint64_t minf_ds, minf_dz, minf_be;
+    if (!find_box(codec, mdia_ds, mdia_be, "minf", minf_ds, minf_dz, minf_be)) return false;
+    uint64_t stbl_ds, stbl_dz, stbl_be;
+    if (!find_box(codec, minf_ds, minf_be, "stbl", stbl_ds, stbl_dz, stbl_be)) return false;
+    uint64_t stsd_ds, stsd_dz, stsd_be;
+    if (!find_box(codec, stbl_ds, stbl_be, "stsd", stsd_ds, stsd_dz, stsd_be) || stsd_dz < 16) return false;
+
+    codec->functions->seek(codec, (unsigned int)(stsd_ds + 8), FMOD_CODEC_SEEK_METHOD_SET);
+    uint8_t sampleEntry[8];
+    unsigned int rb = 0;
+    codec->functions->read(codec, sampleEntry, sizeof(sampleEntry), &rb);
+    if (rb < sizeof(sampleEntry)) return false;
+
+    std::memcpy(outType, sampleEntry + 4, 4);
+    outType[4] = '\0';
+    return true;
+}
+
 // =========================================================
 // stsc/stco/stsz を直接読み取りフレームオフセットを計算する構造体
 // minimp4 の payload_bytes バグで各テーブルが全ゼロになる問題を回避する
@@ -367,6 +405,7 @@ static bool build_alac_frame_table(FMOD_CODEC_STATE* codec, uint32_t totalSize,
 // 成功時は outCookie[24] にビッグエンディアンの生バイトを格納して true を返す
 // =========================================================
 static bool read_alac_magic_cookie(FMOD_CODEC_STATE* codec, uint32_t totalSize,
+                                    unsigned int trackIdx,
                                     uint8_t outCookie[24])
 {
     uint64_t ds, dz, be;
@@ -376,31 +415,32 @@ static bool read_alac_magic_cookie(FMOD_CODEC_STATE* codec, uint32_t totalSize,
     const uint64_t moov_data = ds;
     const uint64_t moov_end  = be;
 
-    // 複数のtrakを順番に確認し、ALACオーディオトラックを探す
     uint64_t trak_search = moov_data;
-    while (find_box(codec, trak_search, moov_end, "trak", ds, dz, be))
+    for (unsigned int t = 0; ; t++)
     {
+        if (!find_box(codec, trak_search, moov_end, "trak", ds, dz, be)) return false;
         const uint64_t trak_data = ds;
         const uint64_t trak_end  = be;
-        trak_search = be; // 次の trak 探索はこのボックスの後から
+        trak_search = be;
+        if (t != trackIdx) continue;
 
         uint64_t mdia_ds, mdia_dz, mdia_be;
-        if (!find_box(codec, trak_data, trak_end, "mdia", mdia_ds, mdia_dz, mdia_be)) continue;
+        if (!find_box(codec, trak_data, trak_end, "mdia", mdia_ds, mdia_dz, mdia_be)) return false;
 
         uint64_t minf_ds, minf_dz, minf_be;
-        if (!find_box(codec, mdia_ds, mdia_be, "minf", minf_ds, minf_dz, minf_be)) continue;
+        if (!find_box(codec, mdia_ds, mdia_be, "minf", minf_ds, minf_dz, minf_be)) return false;
 
         uint64_t stbl_ds, stbl_dz, stbl_be;
-        if (!find_box(codec, minf_ds, minf_be, "stbl", stbl_ds, stbl_dz, stbl_be)) continue;
+        if (!find_box(codec, minf_ds, minf_be, "stbl", stbl_ds, stbl_dz, stbl_be)) return false;
 
         // stsd は FullBox: version(1) + flags(3) + entry_count(4) = 8バイト先頭をスキップ
         uint64_t stsd_ds, stsd_dz, stsd_be;
-        if (!find_box(codec, stbl_ds, stbl_be, "stsd", stsd_ds, stsd_dz, stsd_be)) continue;
+        if (!find_box(codec, stbl_ds, stbl_be, "stsd", stsd_ds, stsd_dz, stsd_be)) return false;
 
         // outer alac SampleEntry を探す (entry_count 8バイト分をスキップした位置から)
         uint64_t alac_ds, alac_dz, alac_be;
-        if (!find_box(codec, stsd_ds + 8, stsd_be, "alac", alac_ds, alac_dz, alac_be)) continue;
-        if (alac_dz < 36) continue;
+        if (!find_box(codec, stsd_ds + 8, stsd_be, "alac", alac_ds, alac_dz, alac_be)) return false;
+        if (alac_dz < 36) return false;
 
         // outer alac ボックスの内容を全てメモリに読み込み、inner alac ボックスをスキャン
         // AudioSampleEntry は V0(28バイト)/V1(44バイト)/V2(72バイト) があるためオフセット固定不可
@@ -409,7 +449,7 @@ static bool read_alac_magic_cookie(FMOD_CODEC_STATE* codec, uint32_t totalSize,
         codec->functions->seek(codec, (unsigned int)alac_ds, FMOD_CODEC_SEEK_METHOD_SET);
         unsigned int rb = 0;
         codec->functions->read(codec, outerBuf.data(), (unsigned int)alac_dz, &rb);
-        if (rb < 36) continue;
+        if (rb < 36) return false;
 
         bool found = false;
         // SampleEntry 基本8バイト以降をスキャン
@@ -431,7 +471,7 @@ static bool read_alac_magic_cookie(FMOD_CODEC_STATE* codec, uint32_t totalSize,
                 }
             }
         }
-        if (found) return true;
+        return found;
     }
     return false;
 }
@@ -439,6 +479,37 @@ static bool read_alac_magic_cookie(FMOD_CODEC_STATE* codec, uint32_t totalSize,
 static bool is_adts_aac(const uint8_t* data, size_t size)
 {
     return size >= 2 && data[0] == 0xFF && (data[1] & 0xF6) == 0xF0;
+}
+
+static uint16_t read_be16(const uint8_t* data)
+{
+    return static_cast<uint16_t>((static_cast<uint16_t>(data[0]) << 8) |
+                                 static_cast<uint16_t>(data[1]));
+}
+
+static uint32_t read_be32(const uint8_t* data)
+{
+    return (static_cast<uint32_t>(data[0]) << 24) |
+           (static_cast<uint32_t>(data[1]) << 16) |
+           (static_cast<uint32_t>(data[2]) << 8)  |
+            static_cast<uint32_t>(data[3]);
+}
+
+static ALACSpecificConfig parse_alac_specific_config(const uint8_t cookie[24])
+{
+    ALACSpecificConfig cfg = {};
+    cfg.frameLength       = read_be32(cookie + 0);
+    cfg.compatibleVersion = cookie[4];
+    cfg.bitDepth          = cookie[5];
+    cfg.pb                = cookie[6];
+    cfg.mb                = cookie[7];
+    cfg.kb                = cookie[8];
+    cfg.numChannels       = cookie[9];
+    cfg.maxRun            = read_be16(cookie + 10);
+    cfg.maxFrameBytes     = read_be32(cookie + 12);
+    cfg.avgBitRate        = read_be32(cookie + 16);
+    cfg.sampleRate        = read_be32(cookie + 20);
+    return cfg;
 }
 
 static FMOD_RESULT decode_aac_buffer(info* x, const FMOD_CREATESOUNDEXINFO* userexinfo)
@@ -511,6 +582,102 @@ static FMOD_RESULT decode_aac_buffer(info* x, const FMOD_CREATESOUNDEXINFO* user
     return FMOD_OK;
 }
 
+static FMOD_RESULT decode_mp4_aac_track(FMOD_CODEC_STATE* codec,
+                                        info* x,
+                                        const FMOD_CREATESOUNDEXINFO* userexinfo,
+                                        uint32_t totalSize,
+                                        const MP4D_demux_t& mp4,
+                                        unsigned int trackIdx)
+{
+    const MP4D_track_t& track = mp4.track[trackIdx];
+    if (!track.dsi || track.dsi_bytes == 0)
+        return FMOD_ERR_FORMAT;
+
+    x->codecType = CODEC_AAC;
+    x->format    = resolvePCMFormat(userexinfo);
+
+    if (!(x->aac = NeAACDecOpen()))
+        return FMOD_ERR_INTERNAL;
+
+    NeAACDecConfigurationPtr config = NeAACDecGetCurrentConfiguration(x->aac);
+    config->outputFormat = x->format.faadFormat;
+    if (userexinfo && userexinfo->defaultfrequency > 0)
+        config->defSampleRate = userexinfo->defaultfrequency;
+    else if (track.SampleDescription.audio.samplerate_hz > 0)
+        config->defSampleRate = track.SampleDescription.audio.samplerate_hz;
+    if (!NeAACDecSetConfiguration(x->aac, config))
+    {
+        NeAACDecClose(x->aac);
+        x->aac = nullptr;
+        return FMOD_ERR_INTERNAL;
+    }
+
+    unsigned long initSampleRate = 0;
+    unsigned char initChannels = 0;
+    if (NeAACDecInit2(x->aac, track.dsi, track.dsi_bytes, &initSampleRate, &initChannels) != 0)
+    {
+        NeAACDecClose(x->aac);
+        x->aac = nullptr;
+        return FMOD_ERR_FORMAT;
+    }
+
+    x->sample_rates = track.SampleDescription.audio.samplerate_hz > 0
+                    ? track.SampleDescription.audio.samplerate_hz
+                    : initSampleRate;
+    x->channels = track.SampleDescription.audio.channelcount > 0
+                ? static_cast<std::byte>(track.SampleDescription.audio.channelcount)
+                : static_cast<std::byte>(initChannels);
+
+    AlacFrameTable frameTable;
+    if (!build_alac_frame_table(codec, totalSize, mp4, trackIdx, frameTable))
+        return FMOD_ERR_FORMAT;
+
+    std::vector<uint8_t> frameIn;
+    std::vector<std::byte> decoded;
+    NeAACDecFrameInfo frameInfo = {};
+
+    for (uint32_t s = 0; s < static_cast<uint32_t>(frameTable.entrySizes.size()); s++)
+    {
+        uint64_t offset = 0;
+        uint32_t frameBytes = 0;
+        if (!frameTable.frame_offset(s, offset, frameBytes)) continue;
+        if (frameBytes == 0) continue;
+
+        frameIn.resize(frameBytes);
+        codec->functions->seek(codec, (unsigned int)offset, FMOD_CODEC_SEEK_METHOD_SET);
+        unsigned int rb = 0;
+        codec->functions->read(codec, frameIn.data(), frameBytes, &rb);
+        if (rb < frameBytes)
+            return FMOD_ERR_FILE_EOF;
+
+        void* buf = NeAACDecDecode(x->aac, &frameInfo, frameIn.data(), frameBytes);
+        if (frameInfo.error != 0)
+            return FMOD_ERR_FILE_BAD;
+        if (frameInfo.samples == 0)
+            continue;
+        if (!buf)
+            return FMOD_ERR_INTERNAL;
+
+        if (frameInfo.channels > 0)
+            x->channels = static_cast<std::byte>(frameInfo.channels);
+        if (frameInfo.samplerate > 0)
+            x->sample_rates = frameInfo.samplerate;
+
+        const std::uint64_t pcmBytes = frameInfo.samples * x->format.bytesPerSample;
+        const size_t prevSize = decoded.size();
+        decoded.resize(prevSize + pcmBytes);
+        std::memcpy(decoded.data() + prevSize, buf, static_cast<size_t>(pcmBytes));
+    }
+
+    if (decoded.empty())
+        return FMOD_ERR_FORMAT;
+
+    x->buffer.assign(decoded.begin(), decoded.end());
+    x->bufferlen = static_cast<unsigned long>(x->buffer.size());
+    x->lengthpcm = x->bufferlen / x->format.bytesPerSample / static_cast<unsigned int>(x->channels);
+    return FMOD_OK;
+}
+
 // =========================================================
 // openコールバック
 // =========================================================
@@ -559,7 +726,9 @@ FMOD_RESULT F_CALL myCodec_open(FMOD_CODEC_STATE* codec, FMOD_MODE usermode, FMO
     }
 
     // =========================================================
-    // ftyp チェック (M4A / mp42 / alac)
+    // ftyp チェック
+    // major brand は制限しすぎると正当な M4A/MP4 を弾くため、
+    // コンテナとして妥当なサイズだけ確認する。
     // =========================================================
     auto chunk = std::make_unique<MP4HEADER>();
     std::memcpy(chunk->size, probe, 4);
@@ -571,48 +740,78 @@ FMOD_RESULT F_CALL myCodec_open(FMOD_CODEC_STATE* codec, FMOD_MODE usermode, FMO
 
     chunk->data.resize(static_cast<size_t>(ftypSize - 8));
     codec->functions->read(codec, chunk->data.data(), static_cast<unsigned int>(ftypSize - 8), &readBytes);
-
-    if (std::memcmp(chunk->data.data(), "M4A ", 4) != 0
-        && std::memcmp(chunk->data.data(), "mp42", 4) != 0
-        && std::memcmp(chunk->data.data(), "alac", 4) != 0)
-    {
+    if (readBytes < ftypSize - 8)
         return FMOD_ERR_FORMAT;
-    }
 
     // =========================================================
     // minimp4 でファイル全体を解析 (サンプルテーブル + メタデータ)
     // =========================================================
     codec->functions->seek(codec, 0, FMOD_CODEC_SEEK_METHOD_SET);
     MP4D_demux_t mp4 = {};
-    MP4D_open(&mp4, mp4_read_callback, codec, totalSize);
+    if (!MP4D_open(&mp4, mp4_read_callback, codec, totalSize))
+        return FMOD_ERR_FORMAT;
 
     if (mp4.tag.title)
     {
         const char* val = (const char*)mp4.tag.title;
         x->title.assign((std::byte*)val, (std::byte*)val + strlen(val));
-        codec->functions->metadata(codec, FMOD_TAGTYPE_ID3V2, (char*)"TITLE",
+        codec->functions->metadata(codec, FMOD_TAGTYPE_USER, (char*)"TITLE",
             x->title.data(), static_cast<unsigned int>(x->title.size()), FMOD_TAGDATATYPE_STRING_UTF8, 1);
     }
     if (mp4.tag.artist)
     {
         const char* val = (const char*)mp4.tag.artist;
         x->artist.assign((std::byte*)val, (std::byte*)val + strlen(val));
-        codec->functions->metadata(codec, FMOD_TAGTYPE_ID3V2, (char*)"ARTIST",
+        codec->functions->metadata(codec, FMOD_TAGTYPE_USER, (char*)"ARTIST",
             x->artist.data(), static_cast<unsigned int>(x->artist.size()), FMOD_TAGDATATYPE_STRING_UTF8, 1);
     }
     if (mp4.tag.album)
     {
         const char* val = (const char*)mp4.tag.album;
         x->album.assign((std::byte*)val, (std::byte*)val + strlen(val));
-        codec->functions->metadata(codec, FMOD_TAGTYPE_ID3V2, (char*)"ALBUM",
+        codec->functions->metadata(codec, FMOD_TAGTYPE_USER, (char*)"ALBUM",
             x->album.data(), static_cast<unsigned int>(x->album.size()), FMOD_TAGDATATYPE_STRING_UTF8, 1);
     }
 
-    // =========================================================
-    // コーデック検出: alac ボックスが見つかれば ALAC、なければ AAC
-    // =========================================================
-    uint8_t alacCookie[24] = {};
-    const bool isALAC = read_alac_magic_cookie(codec, totalSize, alacCookie);
+    int audioTrack = -1;
+    bool isALAC = false;
+    for (unsigned int i = 0; i < mp4.track_count; i++)
+    {
+        if (mp4.track[i].handler_type != MP4D_HANDLER_TYPE_SOUN)
+            continue;
+
+        char sampleEntryType[5] = {};
+        if (!read_track_sample_entry_type(codec, totalSize, i, sampleEntryType))
+            continue;
+
+        if (std::memcmp(sampleEntryType, "alac", 4) == 0)
+        {
+            audioTrack = static_cast<int>(i);
+            isALAC = true;
+            break;
+        }
+
+        if (audioTrack < 0 && std::memcmp(sampleEntryType, "mp4a", 4) == 0)
+            audioTrack = static_cast<int>(i);
+    }
+
+    if (audioTrack < 0)
+    {
+        for (unsigned int i = 0; i < mp4.track_count; i++)
+        {
+            if (mp4.track[i].handler_type == MP4D_HANDLER_TYPE_SOUN)
+            {
+                audioTrack = static_cast<int>(i);
+                break;
+            }
+        }
+    }
+
+    if (audioTrack < 0)
+    {
+        MP4D_close(&mp4);
+        return FMOD_ERR_FORMAT;
+    }
 
     if (isALAC)
     {
@@ -621,18 +820,8 @@ FMOD_RESULT F_CALL myCodec_open(FMOD_CODEC_STATE* codec, FMOD_MODE usermode, FMO
         // =========================================================
         x->codecType = CODEC_ALAC;
 
-        // オーディオトラック番号を探す
-        int audioTrack = -1;
-        for (unsigned int i = 0; i < mp4.track_count; i++)
-        {
-            if (mp4.track[i].handler_type == MP4D_HANDLER_TYPE_SOUN)
-            {
-                audioTrack = (int)i;
-                break;
-            }
-        }
-
-        if (audioTrack < 0)
+        uint8_t alacCookie[24] = {};
+        if (!read_alac_magic_cookie(codec, totalSize, static_cast<unsigned int>(audioTrack), alacCookie))
         {
             MP4D_close(&mp4);
             return FMOD_ERR_FORMAT;
@@ -658,7 +847,7 @@ FMOD_RESULT F_CALL myCodec_open(FMOD_CODEC_STATE* codec, FMOD_MODE usermode, FMO
             return FMOD_ERR_INTERNAL;
         }
 
-        const ALACSpecificConfig& cfg = alacDecoder.mConfig;
+        const ALACSpecificConfig cfg = parse_alac_specific_config(alacCookie);
 
         x->sample_rates = cfg.sampleRate;
         x->channels     = (std::byte)cfg.numChannels;
@@ -723,21 +912,9 @@ FMOD_RESULT F_CALL myCodec_open(FMOD_CODEC_STATE* codec, FMOD_MODE usermode, FMO
         // =========================================================
         // AACデコードパス
         // =========================================================
-        uint64_t mdat_ds, mdat_dz, mdat_be;
-        if (!find_box(codec, 0, totalSize, "mdat", mdat_ds, mdat_dz, mdat_be))
-        {
-            MP4D_close(&mp4);
-            return FMOD_ERR_FORMAT;
-        }
-
-        x->bufferlen = static_cast<unsigned long>(mdat_dz);
-        x->buffer.resize(x->bufferlen);
-        codec->functions->seek(codec, (unsigned int)mdat_ds, FMOD_CODEC_SEEK_METHOD_SET);
-        unsigned int rb = 0;
-        codec->functions->read(codec, x->buffer.data(), x->bufferlen, &rb);
-        x->bufferlen = rb;
-
-        FMOD_RESULT decodeResult = decode_aac_buffer(x.get(), userexinfo);
+        FMOD_RESULT decodeResult = decode_mp4_aac_track(codec, x.get(), userexinfo,
+                                                        totalSize, mp4,
+                                                        static_cast<unsigned int>(audioTrack));
         if (decodeResult != FMOD_OK)
         {
             MP4D_close(&mp4);
@@ -846,7 +1023,7 @@ FMOD_RESULT F_CALL myCodec_getWaveFormat(FMOD_CODEC_STATE* codec, int index, FMO
 FMOD_CODEC_DESCRIPTION myCodec = {
     FMOD_CODEC_PLUGIN_VERSION,
     "FMOD MP4/AAC+ALAC Codec",
-    0x00010001,
+    0x00010002,
     0,
     FMOD_TIMEUNIT_PCMBYTES,
     &myCodec_open,
