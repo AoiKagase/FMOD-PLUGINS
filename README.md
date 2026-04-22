@@ -39,7 +39,7 @@ FMOD-PLUGINS/
 | Configuration | Format |
 | --- | --- |
 | `ape` | Monkey's Audio |
-| `mp4` | AAC / ALAC in MP4 container |
+| `mp4` | AAC (raw ADTS) / AAC in MP4 / ALAC in MP4 |
 | `opus` | Ogg Opus |
 | `srla` | [Soleil Rising Lossless Audio](https://github.com/aikiriao/SRLA)|
 | `tak` | Tom's lossless Audio Kompressor |

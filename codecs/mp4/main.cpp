@@ -436,6 +436,81 @@ static bool read_alac_magic_cookie(FMOD_CODEC_STATE* codec, uint32_t totalSize,
     return false;
 }
 
+static bool is_adts_aac(const uint8_t* data, size_t size)
+{
+    return size >= 2 && data[0] == 0xFF && (data[1] & 0xF6) == 0xF0;
+}
+
+static FMOD_RESULT decode_aac_buffer(info* x, const FMOD_CREATESOUNDEXINFO* userexinfo)
+{
+    x->codecType = CODEC_AAC;
+    x->format    = resolvePCMFormat(userexinfo);
+
+    if (!(x->aac = NeAACDecOpen()))
+        return FMOD_ERR_INTERNAL;
+
+    if (NeAACDecInit(x->aac,
+                     reinterpret_cast<unsigned char*>(x->buffer.data()), x->bufferlen,
+                     reinterpret_cast<unsigned long*>(&x->sample_rates),
+                     reinterpret_cast<unsigned char*>(&x->channels)) != 0)
+    {
+        NeAACDecClose(x->aac);
+        x->aac = nullptr;
+        return FMOD_ERR_INTERNAL;
+    }
+
+    NeAACDecConfigurationPtr config = NeAACDecGetCurrentConfiguration(x->aac);
+    config->outputFormat = x->format.faadFormat;
+    if (userexinfo && userexinfo->defaultfrequency > 0)
+        config->defSampleRate = userexinfo->defaultfrequency;
+    else
+        config->defSampleRate = static_cast<unsigned long>(x->sample_rates);
+    NeAACDecSetConfiguration(x->aac, config);
+
+    void* buf = nullptr;
+    unsigned long position = 0;
+    std::uint64_t read = 0;
+    std::vector<std::byte> decoded;
+    NeAACDecFrameInfo frameInfo;
+
+    while (position < x->bufferlen)
+    {
+        buf = NeAACDecDecode(x->aac, &frameInfo,
+                             (unsigned char*)&x->buffer[position], x->bufferlen - position);
+
+        if (frameInfo.error != 0)
+        {
+            x->bufferlen = 0;
+            return FMOD_ERR_FILE_BAD;
+        }
+
+        if (frameInfo.bytesconsumed > x->bufferlen)
+        {
+            x->bufferlen = 0;
+        }
+        else if (frameInfo.samples != 0)
+        {
+            if (!buf)
+                return FMOD_ERR_INTERNAL;
+
+            if (frameInfo.bytesconsumed > 0)
+            {
+                const std::uint64_t frameBytes = frameInfo.samples * x->format.bytesPerSample;
+                decoded.resize(decoded.size() + frameBytes);
+                std::memcpy(&decoded[read], buf, frameBytes);
+                position += frameInfo.bytesconsumed;
+                read += frameBytes;
+            }
+        }
+    }
+
+    x->bufferlen = static_cast<unsigned long>(read);
+    x->lengthpcm = static_cast<std::uint32_t>(read / x->format.bytesPerSample / static_cast<unsigned int>(x->channels));
+    x->buffer.assign(decoded.begin(), decoded.end());
+
+    return FMOD_OK;
+}
+
 // =========================================================
 // openコールバック
 // =========================================================
@@ -449,21 +524,53 @@ FMOD_RESULT F_CALL myCodec_open(FMOD_CODEC_STATE* codec, FMOD_MODE usermode, FMO
     if (totalSize <= 0)
         return FMOD_ERR_FILE_EOF;
 
+    uint8_t probe[8] = {};
+    unsigned int readBytes = 0;
+    codec->functions->seek(codec, 0, FMOD_CODEC_SEEK_METHOD_SET);
+    codec->functions->read(codec, probe, sizeof(probe), &readBytes);
+    if (readBytes < sizeof(probe))
+        return FMOD_ERR_FORMAT;
+
+    const bool isMP4Container = std::memcmp(probe + 4, "ftyp", 4) == 0;
+    const bool isRawAAC       = is_adts_aac(probe, sizeof(probe));
+    if (!isMP4Container && !isRawAAC)
+        return FMOD_ERR_FORMAT;
+
+    auto x = std::make_unique<info>();
+    x->aac = nullptr;
+
+    if (isRawAAC)
+    {
+        x->bufferlen = totalSize;
+        x->buffer.resize(x->bufferlen);
+        codec->functions->seek(codec, 0, FMOD_CODEC_SEEK_METHOD_SET);
+        codec->functions->read(codec, x->buffer.data(), x->bufferlen, &readBytes);
+        x->bufferlen = readBytes;
+        if (x->bufferlen == 0)
+            return FMOD_ERR_FILE_EOF;
+
+        FMOD_RESULT decodeResult = decode_aac_buffer(x.get(), userexinfo);
+        if (decodeResult != FMOD_OK)
+            return decodeResult;
+
+        codec->numsubsounds = 0;
+        codec->plugindata   = x.release();
+        return FMOD_OK;
+    }
+
     // =========================================================
     // ftyp チェック (M4A / mp42 / alac)
     // =========================================================
     auto chunk = std::make_unique<MP4HEADER>();
-    unsigned int readBytes = 0;
-    FMOD_RESULT r;
-
-    r = codec->functions->read(codec, chunk->size,   4, &readBytes);
-    r = codec->functions->read(codec, chunk->header, 4, &readBytes);
-    if (std::memcmp(chunk->header, "ftyp", 4) != 0)
-        return FMOD_ERR_FORMAT;
+    std::memcpy(chunk->size, probe, 4);
+    std::memcpy(chunk->header, probe + 4, 4);
 
     const std::uint64_t ftypSize = _get_size(chunk->size);
+    if (ftypSize < 12)
+        return FMOD_ERR_FORMAT;
+
     chunk->data.resize(static_cast<size_t>(ftypSize - 8));
-    r = codec->functions->read(codec, chunk->data.data(), static_cast<unsigned int>(ftypSize - 8), &readBytes);
+    codec->functions->read(codec, chunk->data.data(), static_cast<unsigned int>(ftypSize - 8), &readBytes);
 
     if (std::memcmp(chunk->data.data(), "M4A ", 4) != 0
         && std::memcmp(chunk->data.data(), "mp42", 4) != 0
@@ -478,12 +585,6 @@ FMOD_RESULT F_CALL myCodec_open(FMOD_CODEC_STATE* codec, FMOD_MODE usermode, FMO
     codec->functions->seek(codec, 0, FMOD_CODEC_SEEK_METHOD_SET);
     MP4D_demux_t mp4 = {};
     MP4D_open(&mp4, mp4_read_callback, codec, totalSize);
-
-    // =========================================================
-    // メタデータ取得
-    // =========================================================
-    auto x = std::make_unique<info>();
-    x->aac = nullptr;
 
     if (mp4.tag.title)
     {
@@ -620,12 +721,8 @@ FMOD_RESULT F_CALL myCodec_open(FMOD_CODEC_STATE* codec, FMOD_MODE usermode, FMO
     else
     {
         // =========================================================
-        // AACデコードパス (既存ロジック)
+        // AACデコードパス
         // =========================================================
-        x->codecType = CODEC_AAC;
-        x->format    = resolvePCMFormat(userexinfo);
-
-        // mdat ボックスをファイルから探して読み込む
         uint64_t mdat_ds, mdat_dz, mdat_be;
         if (!find_box(codec, 0, totalSize, "mdat", mdat_ds, mdat_dz, mdat_be))
         {
@@ -640,82 +737,12 @@ FMOD_RESULT F_CALL myCodec_open(FMOD_CODEC_STATE* codec, FMOD_MODE usermode, FMO
         codec->functions->read(codec, x->buffer.data(), x->bufferlen, &rb);
         x->bufferlen = rb;
 
-        // FAAD2デコーダオープン
-        if (!(x->aac = NeAACDecOpen()))
+        FMOD_RESULT decodeResult = decode_aac_buffer(x.get(), userexinfo);
+        if (decodeResult != FMOD_OK)
         {
             MP4D_close(&mp4);
-            return FMOD_ERR_INTERNAL;
+            return decodeResult;
         }
-
-        if (NeAACDecInit(x->aac,
-                         reinterpret_cast<unsigned char*>(x->buffer.data()), x->bufferlen,
-                         reinterpret_cast<unsigned long*>(&x->sample_rates),
-                         reinterpret_cast<unsigned char*>(&x->channels)) != 0)
-        {
-            NeAACDecClose(x->aac);
-            x->aac = nullptr;
-            MP4D_close(&mp4);
-            return FMOD_ERR_INTERNAL;
-        }
-
-        // FAAD2コンフィグ
-        NeAACDecConfigurationPtr config = NeAACDecGetCurrentConfiguration(x->aac);
-        config->outputFormat = x->format.faadFormat;
-        if (userexinfo && userexinfo->defaultfrequency > 0)
-            config->defSampleRate = userexinfo->defaultfrequency;
-        else
-            config->defSampleRate = static_cast<unsigned long>(x->sample_rates);
-        NeAACDecSetConfiguration(x->aac, config);
-
-        void* buf = nullptr;
-        unsigned long position = 0;
-        std::uint64_t read = 0;
-        std::vector<std::byte> decoded;
-        NeAACDecFrameInfo frameInfo;
-
-        while (position < x->bufferlen)
-        {
-            buf = NeAACDecDecode(x->aac, &frameInfo,
-                                  (unsigned char*)&x->buffer[position], x->bufferlen - position);
-
-            if (frameInfo.error != 0)
-            {
-                x->bufferlen = 0;
-                MP4D_close(&mp4);
-                return FMOD_ERR_FILE_BAD;
-            }
-
-            if (frameInfo.bytesconsumed > x->bufferlen)
-            {
-                x->bufferlen = 0;
-            }
-            else
-            {
-                if (frameInfo.samples != 0)
-                {
-                    if (!buf)
-                    {
-                        MP4D_close(&mp4);
-                        return FMOD_ERR_INTERNAL;
-                    }
-                    if (frameInfo.bytesconsumed > 0)
-                    {
-                        const std::uint64_t frameBytes = frameInfo.samples * x->format.bytesPerSample;
-                        decoded.resize(decoded.size() + frameBytes);
-                        std::memcpy(&decoded[read], buf, frameBytes);
-                        position += frameInfo.bytesconsumed;
-                        read += frameBytes;
-                    }
-                }
-            }
-        }
-
-        x->bufferlen = static_cast<unsigned long>(read);
-        x->lengthpcm = static_cast<std::uint32_t>(read / x->format.bytesPerSample / static_cast<unsigned int>(x->channels));
-
-        x->buffer.clear();
-        x->buffer.resize(read);
-        std::memcpy(x->buffer.data(), decoded.data(), read);
     }
 
     MP4D_close(&mp4);
