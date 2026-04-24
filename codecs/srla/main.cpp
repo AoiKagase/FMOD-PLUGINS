@@ -19,6 +19,8 @@
 #include <cstdint>
 #include <cstring>
 #include <algorithm>
+#include <string>
+#include <cctype>
 
 #include <srla_decoder.h>
 
@@ -47,6 +49,10 @@ static SRLAPCMFormat resolveSRLAFormat(uint16_t bps)
 struct SRLAInfo
 {
     std::vector<uint8_t>  buffer;
+    std::vector<uint8_t>  title;
+    std::vector<uint8_t>  artist;
+    std::vector<uint8_t>  album;
+    std::vector<uint8_t>  coverArt;
     uint64_t              position       = 0;
     int                   channels       = 0;
     int                   sampleRate     = 0;
@@ -54,6 +60,128 @@ struct SRLAInfo
     FMOD_SOUND_FORMAT     fmodFormat     = FMOD_SOUND_FORMAT_PCM16;
     FMOD_CODEC_WAVEFORMAT waveFormat     = {};
 };
+
+struct SRLAAPEv2Range
+{
+    uint32_t tagStart = 0;
+    uint32_t tagEnd   = 0;
+};
+
+static uint32_t readLE32(const uint8_t* p)
+{
+    return static_cast<uint32_t>(p[0])
+         | (static_cast<uint32_t>(p[1]) << 8)
+         | (static_cast<uint32_t>(p[2]) << 16)
+         | (static_cast<uint32_t>(p[3]) << 24);
+}
+
+static std::string toLowerASCII(std::string s)
+{
+    for (char& ch : s)
+        ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    return s;
+}
+
+static bool findTrailingAPEv2Range(const uint8_t* fileData, uint32_t fileSize, SRLAAPEv2Range& outRange)
+{
+    if (fileSize < 32) return false;
+
+    const uint32_t footerOffsets[] = {
+        fileSize - 32,
+        (fileSize >= 160) ? (fileSize - 160) : 0
+    };
+
+    for (const uint32_t footerOffset : footerOffsets)
+    {
+        if (footerOffset + 32 > fileSize) continue;
+        if (std::memcmp(fileData + footerOffset, "APETAGEX", 8) != 0) continue;
+
+        const uint8_t* footer    = fileData + footerOffset;
+        const uint32_t tagSize   = readLE32(footer + 12);
+        const uint32_t itemCount = readLE32(footer + 16);
+        const uint32_t flags     = readLE32(footer + 20);
+        const uint32_t tagStart  = footerOffset + 32 - tagSize;
+        const bool hasHeader     = ((flags >> 31) & 1u) != 0;
+
+        if (itemCount == 0 || tagSize < 32 || tagStart > footerOffset) continue;
+        if (tagStart > fileSize || footerOffset + 32 > fileSize) continue;
+        if (hasHeader && tagSize < 64) continue;
+
+        outRange.tagStart = tagStart;
+        outRange.tagEnd   = footerOffset + 32;
+        return true;
+    }
+
+    return false;
+}
+
+static void readTrailingAPEv2Tags(const uint8_t* fileData, uint32_t fileSize, SRLAInfo* x, uint32_t* audioDataSize)
+{
+    if (audioDataSize)
+        *audioDataSize = fileSize;
+
+    SRLAAPEv2Range tagRange = {};
+    if (!findTrailingAPEv2Range(fileData, fileSize, tagRange))
+        return;
+
+    if (audioDataSize)
+        *audioDataSize = tagRange.tagStart;
+
+    const uint8_t* footer    = fileData + tagRange.tagEnd - 32;
+    const uint32_t itemCount = readLE32(footer + 16);
+    const uint32_t flags     = readLE32(footer + 20);
+    const bool hasHeader     = ((flags >> 31) & 1u) != 0;
+
+    const uint8_t* itemsStart = fileData + tagRange.tagStart + (hasHeader ? 32 : 0);
+    const uint8_t* itemsEnd   = footer;
+    const uint8_t* p          = itemsStart;
+    uint32_t parsed           = 0;
+
+    while (p + 8 <= itemsEnd && parsed < itemCount)
+    {
+        const uint32_t valueLen   = readLE32(p + 0);
+        const uint32_t itemFlags  = readLE32(p + 4);
+        const uint32_t valueType  = (itemFlags >> 1) & 0x3u;
+        p += 8;
+
+        const uint8_t* keyStart = p;
+        while (p < itemsEnd && *p != 0) ++p;
+        if (p >= itemsEnd) break;
+
+        const std::string key(reinterpret_cast<const char*>(keyStart), p - keyStart);
+        const std::string keyLower = toLowerASCII(key);
+        ++p;
+
+        if (p + valueLen > itemsEnd) break;
+        const uint8_t* value = p;
+        p += valueLen;
+        ++parsed;
+
+        if (keyLower == "title")
+        {
+            x->title.assign(value, value + valueLen);
+        }
+        else if (keyLower == "artist")
+        {
+            x->artist.assign(value, value + valueLen);
+        }
+        else if (keyLower == "album")
+        {
+            x->album.assign(value, value + valueLen);
+        }
+        else if ((keyLower == "cover art (front)" || keyLower == "cover art" || keyLower == "coverart")
+                 && valueType == 1 && valueLen > 0)
+        {
+            const void* descEnd = std::memchr(value, 0, valueLen);
+            if (!descEnd) continue;
+
+            const uint8_t* imageData = static_cast<const uint8_t*>(descEnd) + 1;
+            if (imageData > value + valueLen) continue;
+
+            x->coverArt.assign(imageData, value + valueLen);
+        }
+    }
+}
 
 // =========================================================
 // int32_t** チャンネル別バッファ → インターリーブ PCM 変換
@@ -106,13 +234,28 @@ static FMOD_RESULT F_CALL srlaCodec_open(FMOD_CODEC_STATE* codec,
     codec->functions->read(codec, fileData.data(), fileSize, &rb);
     if (rb < SRLA_HEADER_SIZE) return FMOD_ERR_FORMAT;
 
+    auto* x = new SRLAInfo();
+    uint32_t audioDataSize = rb;
+    readTrailingAPEv2Tags(fileData.data(), rb, x, &audioDataSize);
+    if (audioDataSize < SRLA_HEADER_SIZE)
+    {
+        delete x;
+        return FMOD_ERR_FORMAT;
+    }
+
     // ヘッダデコード（フォーマット検出）
     SRLAHeader header = {};
-    if (SRLADecoder_DecodeHeader(fileData.data(), rb, &header) != SRLA_APIRESULT_OK)
+    if (SRLADecoder_DecodeHeader(fileData.data(), audioDataSize, &header) != SRLA_APIRESULT_OK)
+    {
+        delete x;
         return FMOD_ERR_FORMAT;
+    }
 
     if (header.num_channels == 0 || header.num_samples == 0 || header.sampling_rate == 0)
+    {
+        delete x;
         return FMOD_ERR_FORMAT;
+    }
 
     // デコーダ設定
     SRLADecoderConfig config      = {};
@@ -121,15 +264,24 @@ static FMOD_RESULT F_CALL srlaCodec_open(FMOD_CODEC_STATE* codec,
     config.check_checksum         = 1;
 
     const int32_t workSize = SRLADecoder_CalculateWorkSize(&config);
-    if (workSize < 0) return FMOD_ERR_INTERNAL;
+    if (workSize < 0)
+    {
+        delete x;
+        return FMOD_ERR_INTERNAL;
+    }
 
     std::vector<uint8_t> work(static_cast<size_t>(workSize));
     SRLADecoder* decoder = SRLADecoder_Create(&config, work.data(), workSize);
-    if (!decoder) return FMOD_ERR_INTERNAL;
+    if (!decoder)
+    {
+        delete x;
+        return FMOD_ERR_INTERNAL;
+    }
 
     if (SRLADecoder_SetHeader(decoder, &header) != SRLA_APIRESULT_OK)
     {
         SRLADecoder_Destroy(decoder);
+        delete x;
         return FMOD_ERR_FORMAT;
     }
 
@@ -145,12 +297,16 @@ static FMOD_RESULT F_CALL srlaCodec_open(FMOD_CODEC_STATE* codec,
 
     const SRLAApiResult res = SRLADecoder_DecodeWhole(
         decoder,
-        fileData.data(), rb,
+        fileData.data(), audioDataSize,
         chPtrs.data(), numCh, numSamples);
 
     SRLADecoder_Destroy(decoder);
 
-    if (res != SRLA_APIRESULT_OK) return FMOD_ERR_FILE_BAD;
+    if (res != SRLA_APIRESULT_OK)
+    {
+        delete x;
+        return FMOD_ERR_FILE_BAD;
+    }
 
     // PCMフォーマット決定・インターリーブ変換
     const SRLAPCMFormat fmt = resolveSRLAFormat(header.bits_per_sample);
@@ -162,7 +318,6 @@ static FMOD_RESULT F_CALL srlaCodec_open(FMOD_CODEC_STATE* codec,
                          pcmBuffer.data(), fmt);
 
     // コーデック状態確定
-    auto* x           = new SRLAInfo();
     x->buffer         = std::move(pcmBuffer);
     x->position       = 0;
     x->channels       = static_cast<int>(numCh);
@@ -178,6 +333,29 @@ static FMOD_RESULT F_CALL srlaCodec_open(FMOD_CODEC_STATE* codec,
 
     codec->plugindata = x;
     codec->waveformat = &x->waveFormat;
+
+    auto setTextTag = [&](const char* key, const std::vector<uint8_t>& value)
+    {
+        if (value.empty()) return;
+        codec->functions->metadata(codec,
+            FMOD_TAGTYPE_USER, const_cast<char*>(key),
+            const_cast<uint8_t*>(value.data()),
+            static_cast<unsigned int>(value.size()),
+            FMOD_TAGDATATYPE_STRING_UTF8, 1);
+    };
+
+    setTextTag("TITLE",  x->title);
+    setTextTag("ARTIST", x->artist);
+    setTextTag("ALBUM",  x->album);
+
+    if (!x->coverArt.empty())
+    {
+        codec->functions->metadata(codec,
+            FMOD_TAGTYPE_USER, (char*)"COVERART",
+            x->coverArt.data(),
+            static_cast<unsigned int>(x->coverArt.size()),
+            FMOD_TAGDATATYPE_BINARY, 1);
+    }
 
     return FMOD_OK;
 }
