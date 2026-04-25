@@ -243,9 +243,18 @@ static FMOD_RESULT F_CALL srlaCodec_open(FMOD_CODEC_STATE* codec,
         return FMOD_ERR_FORMAT;
     }
 
+    std::vector<uint8_t> audioDataStorage;
+    const uint8_t* audioData = fileData.data();
+    if (audioDataSize != rb)
+    {
+        // Trailing metadata is parsed separately; hand the decoder a trimmed payload.
+        audioDataStorage.assign(fileData.begin(), fileData.begin() + audioDataSize);
+        audioData = audioDataStorage.data();
+    }
+
     // ヘッダデコード（フォーマット検出）
     SRLAHeader header = {};
-    if (SRLADecoder_DecodeHeader(fileData.data(), audioDataSize, &header) != SRLA_APIRESULT_OK)
+    if (SRLADecoder_DecodeHeader(audioData, audioDataSize, &header) != SRLA_APIRESULT_OK)
     {
         delete x;
         return FMOD_ERR_FORMAT;
@@ -297,7 +306,7 @@ static FMOD_RESULT F_CALL srlaCodec_open(FMOD_CODEC_STATE* codec,
 
     const SRLAApiResult res = SRLADecoder_DecodeWhole(
         decoder,
-        fileData.data(), audioDataSize,
+        audioData, audioDataSize,
         chPtrs.data(), numCh, numSamples);
 
     SRLADecoder_Destroy(decoder);
