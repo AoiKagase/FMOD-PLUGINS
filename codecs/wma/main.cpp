@@ -21,6 +21,8 @@
 #include <algorithm>
 #include <string>
 #include <mutex>
+#include <initializer_list>
+#include <cctype>
 
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -101,6 +103,12 @@ static PCMFormatInfo resolveWmaFormat(UINT32 nativeBps)
 struct WmaInfo
 {
     std::vector<uint8_t>  buffer;
+    std::string           title;
+    std::string           artist;
+    std::string           album;
+    std::string           year;
+    std::string           trackNumber;
+    std::string           trackTotal;
     uint64_t              position       = 0;
     int                   channels       = 0;
     int                   sampleRate     = 0;
@@ -122,6 +130,31 @@ static std::string wstrToUtf8(const std::wstring& ws)
     WideCharToMultiByte(CP_UTF8, 0, ws.c_str(), -1,
         result.data(), len, nullptr, nullptr);
     return result;
+}
+
+static void splitTrackValue(const std::string& value, std::string& number, std::string& total)
+{
+    const auto trim = [](std::string s)
+    {
+        while (!s.empty() && std::isspace(static_cast<unsigned char>(s.front())))
+            s.erase(s.begin());
+        while (!s.empty() && std::isspace(static_cast<unsigned char>(s.back())))
+            s.pop_back();
+        return s;
+    };
+
+    number.clear();
+    total.clear();
+
+    const size_t slash = value.find('/');
+    if (slash == std::string::npos)
+    {
+        number = trim(value);
+        return;
+    }
+
+    number = trim(value.substr(0, slash));
+    total = trim(value.substr(slash + 1));
 }
 
 // =========================================================
@@ -301,7 +334,7 @@ static FMOD_RESULT F_CALL wmaCodec_open(FMOD_CODEC_STATE* codec,
     // =========================================================
     // メタデータ抽出 (IMFMetadata 経由)
     // =========================================================
-    std::string tagTitle, tagArtist, tagAlbum;
+    std::string tagTitle, tagArtist, tagAlbum, tagYear, tagTrackNumber, tagTrackTotal;
     {
         Microsoft::WRL::ComPtr<IMFMetadataProvider> spMetaProvider;
         HRESULT hrMeta = MFGetService(spReader.Get(),
@@ -313,27 +346,37 @@ static FMOD_RESULT F_CALL wmaCodec_open(FMOD_CODEC_STATE* codec,
             hrMeta = spMetaProvider->GetMFMetadata(nullptr, 0, 0, &spMeta);
             if (SUCCEEDED(hrMeta))
             {
-                auto getTag = [&](LPCWSTR propName) -> std::string
+                auto getTag = [&](std::initializer_list<LPCWSTR> propNames) -> std::string
                 {
-                    PROPVARIANT pv;
-                    PropVariantInit(&pv);
-                    std::string result;
-                    if (SUCCEEDED(spMeta->GetProperty(propName, &pv)))
+                    for (auto propName : propNames)
                     {
-                        LPWSTR str = nullptr;
-                        if (SUCCEEDED(PropVariantToStringAlloc(pv, &str)))
+                        PROPVARIANT pv;
+                        PropVariantInit(&pv);
+                        std::string result;
+                        if (SUCCEEDED(spMeta->GetProperty(propName, &pv)))
                         {
-                            result = wstrToUtf8(str);
-                            CoTaskMemFree(str);
+                            LPWSTR str = nullptr;
+                            if (SUCCEEDED(PropVariantToStringAlloc(pv, &str)))
+                            {
+                                result = wstrToUtf8(str);
+                                CoTaskMemFree(str);
+                            }
                         }
+                        PropVariantClear(&pv);
+                        if (!result.empty())
+                            return result;
                     }
-                    PropVariantClear(&pv);
-                    return result;
+                    return {};
                 };
 
-                tagTitle  = getTag(L"Title");
-                tagArtist = getTag(L"Author");
-                tagAlbum  = getTag(L"WM/AlbumTitle");
+                tagTitle  = getTag({ L"Title" });
+                tagArtist = getTag({ L"Author" });
+                tagAlbum  = getTag({ L"WM/AlbumTitle" });
+                tagYear   = getTag({ L"WM/Year", L"Year" });
+
+                const std::string trackRaw = getTag({ L"WM/TrackNumber", L"WM/Track", L"TrackNumber", L"Track" });
+                splitTrackValue(trackRaw, tagTrackNumber, tagTrackTotal);
+
             }
         }
     }
@@ -377,6 +420,17 @@ static FMOD_RESULT F_CALL wmaCodec_open(FMOD_CODEC_STATE* codec,
     setTag(tagTitle,  "Title");
     setTag(tagArtist, "Artist");
     setTag(tagAlbum,  "Album");
+    setTag(tagYear,   "YEAR");
+    setTag(tagTrackNumber, "TRACKNUMBER");
+    setTag(tagTrackTotal,   "TRACKTOTAL");
+
+    if (!tagTrackNumber.empty())
+    {
+        const std::string trackValue = tagTrackTotal.empty()
+            ? tagTrackNumber
+            : tagTrackNumber + "/" + tagTrackTotal;
+        setTag(trackValue, "TRACK");
+    }
 
     return FMOD_OK;
 }

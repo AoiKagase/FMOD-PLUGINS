@@ -21,6 +21,7 @@
 #include <algorithm>
 #include <string>
 #include <cctype>
+#include <cstdlib>
 
 #include <srla_decoder.h>
 
@@ -53,6 +54,9 @@ struct SRLAInfo
     std::vector<uint8_t>  artist;
     std::vector<uint8_t>  album;
     std::vector<uint8_t>  coverArt;
+    std::string           year;
+    std::string           trackNumber;
+    std::string           trackTotal;
     uint64_t              position       = 0;
     int                   channels       = 0;
     int                   sampleRate     = 0;
@@ -80,6 +84,33 @@ static std::string toLowerASCII(std::string s)
     for (char& ch : s)
         ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
     return s;
+}
+
+static std::string trimASCII(std::string s)
+{
+    const auto isSpace = [](unsigned char c) { return std::isspace(c) != 0; };
+
+    while (!s.empty() && isSpace(static_cast<unsigned char>(s.front())))
+        s.erase(s.begin());
+    while (!s.empty() && isSpace(static_cast<unsigned char>(s.back())))
+        s.pop_back();
+    return s;
+}
+
+static void splitTrackValue(const std::string& value, std::string& number, std::string& total)
+{
+    number.clear();
+    total.clear();
+
+    const size_t slash = value.find('/');
+    if (slash == std::string::npos)
+    {
+        number = trimASCII(value);
+        return;
+    }
+
+    number = trimASCII(value.substr(0, slash));
+    total = trimASCII(value.substr(slash + 1));
 }
 
 static bool findTrailingAPEv2Range(const uint8_t* fileData, uint32_t fileSize, SRLAAPEv2Range& outRange)
@@ -169,16 +200,41 @@ static void readTrailingAPEv2Tags(const uint8_t* fileData, uint32_t fileSize, SR
         {
             x->album.assign(value, value + valueLen);
         }
+        else if (keyLower == "year" || keyLower == "date")
+        {
+            x->year.assign(reinterpret_cast<const char*>(value), valueLen);
+        }
+        else if (keyLower == "track")
+        {
+            const std::string trackValue(reinterpret_cast<const char*>(value), valueLen);
+            splitTrackValue(trackValue, x->trackNumber, x->trackTotal);
+        }
+        else if (keyLower == "tracknumber")
+        {
+            x->trackNumber.assign(reinterpret_cast<const char*>(value), valueLen);
+        }
+        else if (keyLower == "tracktotal")
+        {
+            x->trackTotal.assign(reinterpret_cast<const char*>(value), valueLen);
+        }
         else if ((keyLower == "cover art (front)" || keyLower == "cover art" || keyLower == "coverart")
-                 && valueType == 1 && valueLen > 0)
+            && valueType == 1 && valueLen > 0)
         {
             const void* descEnd = std::memchr(value, 0, valueLen);
-            if (!descEnd) continue;
 
-            const uint8_t* imageData = static_cast<const uint8_t*>(descEnd) + 1;
-            if (imageData > value + valueLen) continue;
-
-            x->coverArt.assign(imageData, value + valueLen);
+            if (descEnd != nullptr)
+            {
+                const uint8_t* imageData = static_cast<const uint8_t*>(descEnd) + 1;
+                if (imageData <= value + valueLen)
+                {
+                    x->coverArt.assign(imageData, value + valueLen);
+                }
+            }
+            else
+            {
+                // SRLAEncoder 側は raw 画像 bytes をそのまま入れているのでこちらを採用する
+                x->coverArt.assign(value, value + valueLen);
+            }
         }
     }
 }
@@ -356,6 +412,43 @@ static FMOD_RESULT F_CALL srlaCodec_open(FMOD_CODEC_STATE* codec,
     setTextTag("TITLE",  x->title);
     setTextTag("ARTIST", x->artist);
     setTextTag("ALBUM",  x->album);
+
+    auto setStringTag = [&](const char* key, const std::string& value)
+    {
+        if (value.empty()) return;
+        codec->functions->metadata(codec,
+            FMOD_TAGTYPE_USER, const_cast<char*>(key),
+            const_cast<char*>(value.c_str()),
+            static_cast<unsigned int>(value.size() + 1),
+            FMOD_TAGDATATYPE_STRING, 1);
+    };
+
+    if (!x->year.empty())
+    {
+        setStringTag("YEAR", x->year);
+        setStringTag("Year", x->year);
+    }
+
+    if (!x->trackNumber.empty())
+    {
+        setStringTag("TRACKNUMBER", x->trackNumber);
+        setStringTag("TrackNumber", x->trackNumber);
+    }
+
+    if (!x->trackTotal.empty())
+    {
+        setStringTag("TRACKTOTAL", x->trackTotal);
+        setStringTag("TrackTotal", x->trackTotal);
+    }
+
+    if (!x->trackNumber.empty())
+    {
+        std::string trackValue = x->trackNumber;
+        if (!x->trackTotal.empty())
+            trackValue += "/" + x->trackTotal;
+        setStringTag("TRACK", trackValue);
+        setStringTag("Track", trackValue);
+    }
 
     if (!x->coverArt.empty())
     {
