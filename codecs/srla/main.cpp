@@ -548,7 +548,7 @@ static FMOD_CODEC_DESCRIPTION s_srlaCodecDesc =
 {
     FMOD_CODEC_PLUGIN_VERSION,
     "FMOD SRLA (Soleil Rising Lossless Audio) Codec",
-    0x00010000,
+    0x00010003,
     1,
     FMOD_TIMEUNIT_PCMBYTES,
     &srlaCodec_open,
