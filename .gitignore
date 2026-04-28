@@ -2,6 +2,7 @@
 .claude/
 build/
 deps/
+fmod*.h
 obj/
 *.obj
 *.pch

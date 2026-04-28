@@ -8,14 +8,14 @@ This document is a practical summary for this repository. It is not legal
 advice, and it does not replace the original license texts of upstream
 projects.
 
-## Included SDK headers
+## External SDK headers
 
 - FMOD SDK headers: `fmod.h`, `fmod_codec.h`, `fmod_common.h`, `fmod_dsp.h`,
   `fmod_dsp_effects.h`, `fmod_errors.h`, `fmod_output.h`
   - Copyright: Firelight Technologies Pty, Ltd.
   - Status: not covered by this repository's MIT license.
-  - Action: verify redistribution rights under the FMOD SDK terms before
-    republishing this repository or shipping derived SDK bundles.
+  - Action: these files are not redistributed in this repository. Build locally
+    with `FMOD_SDK_DIR` pointing at an installed FMOD Studio API SDK.
 
 ## Codec dependency summary
 

@@ -52,6 +52,11 @@ FMOD-PLUGINS/
 ### 1. Fetch dependencies
 
 外部依存を取得して `deps/` 配下に展開します。
+FMOD SDK ヘッダは公開対象に含めないため、事前にローカルの FMOD Studio API インストール先を `FMOD_SDK_DIR` に指定してください。
+
+```powershell
+$env:FMOD_SDK_DIR = "C:\Program Files (x86)\FMOD SoundSystem\FMOD Studio API Windows"
+```
 
 ```powershell
 .\scripts\fetch-dependencies.ps1
@@ -98,6 +103,7 @@ ape, mp4, opus, srla, tta, wma, wv
 ## Notes
 
 - `deps/`, `build/`, `obj/` は生成物であり、リポジトリには含めません。
+- `fmod*.h` は FMOD SDK からローカルに取得するファイルであり、公開リポジトリには含めません。
 - `tak` をビルドする場合は、事前に `TAK_SDK_URL` を設定して依存取得を実行してください。
 
 ## License

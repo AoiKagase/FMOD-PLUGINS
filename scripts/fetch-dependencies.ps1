@@ -167,6 +167,49 @@ function Copy-Files {
     }
 }
 
+function Copy-FmodHeaders {
+    $requiredHeaders = @(
+        "fmod.h",
+        "fmod_codec.h",
+        "fmod_common.h",
+        "fmod_dsp.h",
+        "fmod_dsp_effects.h",
+        "fmod_errors.h",
+        "fmod_output.h"
+    )
+
+    $destinationRoot = Join-Path $srcRoot "fmod"
+    Ensure-Directory -Path $destinationRoot
+
+    $candidateRoots = @()
+    if ($env:FMOD_SDK_DIR) {
+        $candidateRoots += (Join-Path $env:FMOD_SDK_DIR "api\core\inc")
+        $candidateRoots += (Join-Path $env:FMOD_SDK_DIR "api\studio\inc")
+        $candidateRoots += $env:FMOD_SDK_DIR
+    }
+    $candidateRoots += $repoRoot
+
+    foreach ($header in $requiredHeaders) {
+        $match = $null
+        foreach ($candidateRoot in $candidateRoots) {
+            if (-not (Test-Path -LiteralPath $candidateRoot)) {
+                continue
+            }
+            $candidate = Join-Path $candidateRoot $header
+            if (Test-Path -LiteralPath $candidate) {
+                $match = Get-Item -LiteralPath $candidate
+                break
+            }
+        }
+
+        if (-not $match) {
+            throw "Could not find $header. Set FMOD_SDK_DIR to your local FMOD Studio API installation before running this script."
+        }
+
+        Copy-Item -LiteralPath $match.FullName -Destination (Join-Path $destinationRoot $header) -Force
+    }
+}
+
 function Get-VsInstallRoot {
     $vswhere = "C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe"
     if (Test-Path -LiteralPath $vswhere) {
@@ -274,6 +317,7 @@ Ensure-Directory -Path $binRoot
 Ensure-Directory -Path $buildRoot
 Ensure-Directory -Path $installedRoot
 Initialize-VsDevEnvironment
+Copy-FmodHeaders
 
 $apeUrl = if ($env:APE_SDK_URL) { $env:APE_SDK_URL } else { "https://monkeysaudio.com/files/MAC_1252_SDK.zip" }
 $faad2Url = if ($env:FAAD2_URL) { $env:FAAD2_URL } else { "https://github.com/knik0/faad2/archive/refs/heads/master.zip" }
