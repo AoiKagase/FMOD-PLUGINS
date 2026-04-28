@@ -18,6 +18,57 @@ jobs:
         shell: pwsh
         run: Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process
 
+      - name: Download FMOD Engine SDK
+        shell: pwsh
+        env:
+          FMOD_ENGINE_WINDOWS_URL: ${{ secrets.FMOD_ENGINE_WINDOWS_URL }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:FMOD_ENGINE_WINDOWS_URL)) {
+            throw "Set the FMOD_ENGINE_WINDOWS_URL repository secret to an authenticated Windows FMOD Engine SDK download URL from https://www.fmod.com/download."
+          }
+
+          $fmodRoot = Join-Path $env:RUNNER_TEMP "fmod-engine"
+          $downloadPath = Join-Path $env:RUNNER_TEMP "fmod-engine-download"
+          New-Item -ItemType Directory -Force -Path $fmodRoot | Out-Null
+
+          Write-Host "Downloading FMOD Engine SDK for Windows"
+          Invoke-WebRequest -Uri $env:FMOD_ENGINE_WINDOWS_URL -OutFile $downloadPath
+
+          $prefixBytes = [System.IO.File]::ReadAllBytes($downloadPath) | Select-Object -First 512
+          $prefixText = [System.Text.Encoding]::ASCII.GetString($prefixBytes)
+          if ($prefixText -match '<!doctype html' -or $prefixText -match '<html') {
+            throw "FMOD download returned HTML instead of an SDK archive or installer. Refresh the FMOD_ENGINE_WINDOWS_URL secret with an authenticated Windows download URL."
+          }
+
+          $signature = [System.IO.File]::ReadAllBytes($downloadPath) | Select-Object -First 2
+          if ($signature[0] -eq 0x50 -and $signature[1] -eq 0x4B) {
+            $zipPath = "$downloadPath.zip"
+            Move-Item -LiteralPath $downloadPath -Destination $zipPath -Force
+            Expand-Archive -LiteralPath $zipPath -DestinationPath $fmodRoot -Force
+          } elseif ($signature[0] -eq 0x4D -and $signature[1] -eq 0x5A) {
+            $installerPath = "$downloadPath.exe"
+            Move-Item -LiteralPath $downloadPath -Destination $installerPath -Force
+            $installRoot = Join-Path $fmodRoot "installed"
+            New-Item -ItemType Directory -Force -Path $installRoot | Out-Null
+            $process = Start-Process -FilePath $installerPath -ArgumentList @("/S", "/D=$installRoot") -Wait -PassThru
+            if ($process.ExitCode -ne 0) {
+              throw "FMOD installer failed with exit code $($process.ExitCode)."
+            }
+          } else {
+            throw "Unsupported FMOD SDK download format. Expected a Windows ZIP archive or EXE installer."
+          }
+
+          $fmodHeader = Get-ChildItem -LiteralPath $fmodRoot -Recurse -File -Filter "fmod.h" |
+            Where-Object { $_.FullName -match '\\api\\core\\inc\\fmod\.h$' } |
+            Select-Object -First 1
+          if (-not $fmodHeader) {
+            throw "Could not locate api\core\inc\fmod.h in the downloaded FMOD Engine SDK."
+          }
+
+          $sdkRoot = $fmodHeader.Directory.Parent.Parent.Parent.FullName
+          "FMOD_SDK_DIR=$sdkRoot" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "FMOD_SDK_DIR configured."
+
       - name: Fetch dependencies
         shell: pwsh
         run: ./scripts/fetch-dependencies.ps1
